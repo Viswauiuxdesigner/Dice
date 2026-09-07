@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Car Data Automation Helper - Phase 2 Cars.co.za Extractor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h1>
+          🚗 Car Data Browser Helper
+          <span class="badge badge-no-node">Phase 2: Cars.co.za Adapter Ready</span>
+        </h1>
+        <p>Local, deterministic DOM extraction, field mapping, and legacy form auto-filling prototype.</p>
+      </div>
+      <div>
+        <a href="https://github.com" target="_blank" class="btn btn-outline" style="font-size:0.8rem; padding:6px 12px;">GitHub Pages Ready</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Same-Origin Security Notice Banner -->
+  <div class="card" style="background:#451a03; border-color:#92400e; margin-bottom:20px;">
+    <h3 style="color:#fef08a; font-size:0.95rem; margin-bottom:4px;">⚠️ Phase 2 Real Cars.co.za Extraction Active</h3>
+    <p style="color:#fde68a; font-size:0.88rem;">
+      The <code>CarsCoZaAdapter</code> extracts 19 structured vehicle fields directly from Cars.co.za pages using JSON-LD microdata, Next.js page state, meta tags, and rendered DOM spec tables. Select a source listing below to test!
+    </p>
+  </div>
+
+  <!-- Source Page Selector -->
+  <div class="card" style="margin-bottom:16px; background:#1e293b;">
+    <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+      <label style="font-weight:600; color:#f8fafc; font-size:0.9rem;">Select Active Source Page:</label>
+      <select id="source-page-select" class="mapping-input" style="width:auto; min-width:320px; font-family:sans-serif;" onchange="switchSourceIframe(this.value)">
+        <option value="cars-co-za-sample.html">🚗 Cars.co.za Listing Sample (2019 BMW X1)</option>
+        <option value="dummy-source.html">📄 Dummy Practice Page (Phase 1)</option>
+      </select>
+      <span id="active-adapter-badge" class="badge" style="background:#0284c7; color:#fff;">CarsCoZaAdapter Active</span>
+    </div>
+  </div>
+
+  <!-- Navigation Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="tab-harness">⚡ Integrated Test Harness</button>
+    <button class="tab-btn" data-tab="tab-cars-sample">🚗 Cars.co.za Listing Sample</button>
+    <button class="tab-btn" data-tab="tab-target">📝 Dummy Target Form</button>
+    <button class="tab-btn" data-tab="tab-mapping">⚙️ Configurable Field Mapping</button>
+    <button class="tab-btn" data-tab="tab-android">📱 Android Compatibility Matrix</button>
+  </div>
+
+  <!-- TAB 1: INTEGRATED TEST HARNESS -->
+  <div id="tab-harness" class="tab-content active">
+    <div class="card full-width" style="margin-bottom:16px;">
+      <div class="action-bar" style="margin-bottom:0;">
+        <button onclick="extractFromIframeSource()" class="btn btn-success">
+          🔍 1. Extract Car Data from Source Page
+        </button>
+        <button id="btn-fill-target-iframe" onclick="fillTargetIframe()" class="btn btn-primary" disabled>
+          📝 2. Fill Mapped Target Form Fields
+        </button>
+        <span style="align-self:center; font-size:0.85rem; color:#94a3b8;">
+          (Form will NOT submit automatically - manual review required)
+        </span>
+      </div>
+    </div>
+
+    <!-- Extraction Status & Summary -->
+    <div id="fill-summary-container" style="margin-bottom:12px;"></div>
+
+    <div class="grid-layout">
+      <!-- Left: Source Listing Iframe -->
+      <div class="card">
+        <h2>SOURCE LISTING: <span id="source-iframe-title">Cars.co.za Sample Listing</span></h2>
+        <p style="margin-bottom:8px; font-size:0.85rem;">Active source listing being parsed by Extractor Adapter.</p>
+        <iframe id="iframe-source" src="cars-co-za-sample.html"></iframe>
+      </div>
+
+      <!-- Right: Target Form Iframe -->
+      <div class="card">
+        <h2>TARGET FORM: Legacy Intake Form</h2>
+        <p style="margin-bottom:8px; font-size:0.85rem;">Simulating 18-field internal intake form.</p>
+        <iframe id="iframe-target" src="dummy-target.html"></iframe>
+      </div>
+    </div>
+
+    <!-- Live Extracted Data Preview Panel -->
+    <div class="card full-width" style="margin-top:20px;">
+      <h2>Extracted Field Data & Status Preview</h2>
+      <p style="margin-bottom:12px; font-size:0.85rem;">Deterministic values extracted from source page, normalized, and validated.</p>
+      <div id="preview-table-container" class="table-responsive">
+        <p style="color:#94a3b8; font-style:italic;">Click "1. Extract Car Data from Source Page" above to run extraction.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: STANDALONE CARS.CO.ZA SAMPLE -->
+  <div id="tab-cars-sample" class="tab-content">
+    <div class="card full-width">
+      <h2>Cars.co.za Sample Listing Fixture</h2>
+      <p style="margin-bottom:16px;">View or test the Cars.co.za sample listing standalone in a full window.</p>
+      <div style="margin-bottom:12px;">
+        <a href="cars-co-za-sample.html" target="_blank" class="btn btn-secondary">Open cars-co-za-sample.html in New Tab ↗</a>
+      </div>
+      <iframe src="cars-co-za-sample.html" style="height:600px;"></iframe>
+    </div>
+  </div>
+
+  <!-- TAB 3: STANDALONE DUMMY TARGET -->
+  <div id="tab-target" class="tab-content">
+    <div class="card full-width">
+      <h2>Dummy Target Legacy Form</h2>
+      <p style="margin-bottom:16px;">View or test the 18-field legacy target form standalone.</p>
+      <div style="margin-bottom:12px;">
+        <a href="dummy-target.html" target="_blank" class="btn btn-secondary">Open dummy-target.html in New Tab ↗</a>
+      </div>
+      <iframe src="dummy-target.html" style="height:600px;"></iframe>
+    </div>
+  </div>
+
+  <!-- TAB 4: CONFIGURABLE FIELD MAPPING -->
+  <div id="tab-mapping" class="tab-content">
+    <div class="card full-width">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:16px;">
+        <div>
+          <h2>Configurable Source → Target Field Mapping</h2>
+          <p>Define which CSS selector or input ID on the target form corresponds to each extracted source car attribute.</p>
+        </div>
+        <div class="action-bar" style="margin:0;">
+          <button onclick="saveMappingChanges()" class="btn btn-success">💾 Save Mapping</button>
+          <button onclick="resetMappingDefaults()" class="btn btn-outline">🔄 Reset to Defaults</button>
+        </div>
+      </div>
+
+      <div id="mapping-editor-container" class="table-responsive"></div>
+    </div>
+  </div>
+
+  <!-- TAB 5: ANDROID COMPATIBILITY MATRIX -->
+  <div id="tab-android" class="tab-content">
+    <div class="card full-width" style="margin-bottom:20px;">
+      <h2>📱 Android Compatibility & Execution Architecture Report</h2>
+      <p style="margin-bottom:16px;">Comprehensive analysis of running this car data helper workflow on Android devices.</p>
+
+      <div class="grid-layout">
+        <div class="card" style="background:#1e293b;">
+          <h3 style="color:#34d399; font-size:1rem; margin-bottom:8px;">A. What WORKS in Plain Android Chrome</h3>
+          <ul style="color:#cbd5e1; font-size:0.88rem; padding-left:20px; line-height:1.6;">
+            <li>Opening static HTML/JS pages hosted on GitHub Pages or local storage.</li>
+            <li>DOM extraction & normalization logic running inside an active page.</li>
+            <li>Saving & retrieving mapping configs / extracted car JSON in <code>localStorage</code>.</li>
+            <li>Form filling logic executing within an active page or iframe.</li>
+            <li>Manual form review and manual submission by user.</li>
+          </ul>
+        </div>
+
+        <div class="card" style="background:#1e293b;">
+          <h3 style="color:#f87171; font-size:1rem; margin-bottom:8px;">B. What DOES NOT WORK in Plain Android Chrome</h3>
+          <ul style="color:#cbd5e1; font-size:0.88rem; padding-left:20px; line-height:1.6;">
+            <li><strong>Cross-tab auto-filling:</strong> Standard Android Chrome isolated web tabs cannot inspect or inject JS into each other due to browser same-origin policies.</li>
+            <li><strong>Chrome Desktop Extension Manifest V3:</strong> Plain Android Chrome does not support desktop Chrome extensions out of the box.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="normalizers.js"></script>
+  <script src="validators.js"></script>
+  <script src="field-mapping.js"></script>
+  <script src="storage-manager.js"></script>
+  <script src="source-extractor.js"></script>
+  <script src="target-filler.js"></script>
+  <script src="app.js"></script>
+  <script>
+    function switchSourceIframe(val) {
+      document.getElementById('iframe-source').src = val;
+      const titleSpan = document.getElementById('source-iframe-title');
+      const badge = document.getElementById('active-adapter-badge');
+      if (val.includes('cars-co-za')) {
+        titleSpan.textContent = 'Cars.co.za Sample Listing';
+        badge.textContent = 'CarsCoZaAdapter Active';
+        badge.style.background = '#0284c7';
+      } else {
+        titleSpan.textContent = 'Dummy Practice Page';
+        badge.textContent = 'DummySourceAdapter Active';
+        badge.style.background = '#059669';
+      }
+    }
+  </script>
+</body>
+</html>
