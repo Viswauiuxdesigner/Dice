@@ -1,22 +1,14 @@
 // ==UserScript==
-// @name         Car Data Entry Helper (Cars.co.za -> Target Form)
-// @namespace    http://local.carhelper/
+// @name         Car Data Entry Helper
+// @namespace    local.car.helper
 // @version      1.0.0
-// @description  Local browser automation helper for car data extraction from Cars.co.za and legacy form auto-filling on Android & Desktop.
-// @author       Antigravity
-// @match        https://www.cars.co.za/for-sale/*
-// @match        https://*.github.io/*
-// @match        http://*.github.io/*
-// @match        *://*/*cars-co-za-sample.html*
-// @match        *://*/*dummy-source.html*
-// @match        *://*/*dummy-target.html*
-// @match        *://*/*target*
-// @match        file://*
+// @description  Local car data extraction and form filling helper
+// @match        https://www.cars.co.za/*
+// @match        https://tamilnadu2026.dicewebfreelancers.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @grant        GM_registerMenuCommand
-// @run-at       document-end
-// ==UserScript==
+// @grant        GM_deleteValue
+// ==/UserScript==
 
 (function () {
   'use strict';
@@ -207,6 +199,15 @@
       } catch (e) {}
       const val = localStorage.getItem(`car_helper_${key}`);
       return val ? JSON.parse(val) : null;
+    },
+    remove(key) {
+      try {
+        if (typeof GM_deleteValue !== 'undefined') {
+          GM_deleteValue(key);
+          return;
+        }
+      } catch (e) {}
+      localStorage.removeItem(`car_helper_${key}`);
     }
   };
 
@@ -331,7 +332,7 @@
   // --- 7. UI WIDGET INJECTION ---
   function injectWidget() {
     const isSourcePage = CarsCoZaAdapter.canHandle(document) || document.location.href.includes('dummy-source.html');
-    const isTargetPage = document.querySelector('form') !== null || document.location.href.includes('dummy-target.html');
+    const isTargetPage = document.querySelector('form') !== null || document.location.href.includes('dummy-target.html') || document.location.href.includes('tamilnadu2026.dicewebfreelancers.com');
 
     if (!isSourcePage && !isTargetPage) return;
 
