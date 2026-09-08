@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.1
+// @version      2.0.2
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -102,16 +102,41 @@
     }
   };
 
-  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER ---
+  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER (Multi-Strategy Cascader) ---
   const CarsCoZaAdapter = {
     canHandle(doc) {
       const url = doc.location?.href || '';
       return url.includes('cars.co.za') || doc.querySelector('#cars-co-za-marker') !== null || doc.title.includes('Cars.co.za');
     },
     extract(doc) {
-      let jsonLdData = {};
-      let nextDataProps = {};
+      if (!doc) doc = document;
 
+      // 1. Next.js Hydrated State Deep Search
+      let nextDataProps = {};
+      try {
+        const nextScript = doc.querySelector('script[id="__NEXT_DATA__"]');
+        if (nextScript && nextScript.textContent) {
+          const parsed = JSON.parse(nextScript.textContent);
+          nextDataProps = parsed.props?.pageProps?.listing ||
+                          parsed.props?.pageProps?.vehicle ||
+                          parsed.props?.pageProps?.initialState?.vehicle ||
+                          parsed.props?.pageProps || {};
+
+          if (!nextDataProps.title && parsed.props?.pageProps?.dehydratedState?.queries) {
+            const queries = parsed.props.pageProps.dehydratedState.queries;
+            for (const q of queries) {
+              const data = q.state?.data;
+              if (data && (data.title || data.make || data.price)) {
+                nextDataProps = data;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 2. JSON-LD Microdata Deep Search
+      let jsonLdData = {};
       try {
         const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
         scripts.forEach(script => {
@@ -122,29 +147,15 @@
             } else if (Array.isArray(parsed)) {
               const found = parsed.find(item => item['@type'] === 'Car' || item['@type'] === 'Vehicle');
               if (found) jsonLdData = found;
+            } else if (parsed['@graph'] && Array.isArray(parsed['@graph'])) {
+              const found = parsed['@graph'].find(item => item['@type'] === 'Car' || item['@type'] === 'Vehicle');
+              if (found) jsonLdData = found;
             }
           } catch (e) {}
         });
       } catch (e) {}
 
-      try {
-        const nextScript = doc.querySelector('script[id="__NEXT_DATA__"]');
-        if (nextScript) {
-          const nextJson = JSON.parse(nextScript.textContent);
-          nextDataProps = nextJson.props?.pageProps?.listing ||
-                          nextJson.props?.pageProps?.vehicle ||
-                          nextJson.props?.pageProps?.initialState?.listing || {};
-        }
-      } catch (e) {}
-
-      const getMeta = (props) => {
-        for (const p of props) {
-          const el = doc.querySelector(`meta[property="${p}"], meta[name="${p}"]`);
-          if (el && el.getAttribute('content')) return el.getAttribute('content').trim();
-        }
-        return '';
-      };
-
+      // Helpers
       const getDOMText = (selectors) => {
         for (const sel of selectors) {
           const el = doc.querySelector(sel);
@@ -167,114 +178,182 @@
         return [];
       };
 
-      const getSpecByLabel = (labels) => {
-        const items = doc.querySelectorAll('.spec-item, .vehicle-details__item, tr, dl, li, [class*="spec"]');
-        for (const item of items) {
-          const txt = item.textContent || '';
+      const getMeta = (props) => {
+        for (const p of props) {
+          const el = doc.querySelector(`meta[property="${p}"], meta[name="${p}"]`);
+          if (el && el.getAttribute('content')) return el.getAttribute('content').trim();
+        }
+        return '';
+      };
+
+      const crawlSpecByLabel = (labels) => {
+        const candidateElements = doc.querySelectorAll('div, span, p, tr, li, dl, dt, [class*="spec"], [class*="detail"], [data-test]');
+        for (const el of candidateElements) {
+          const txt = el.textContent || '';
+          if (!txt) continue;
+
           for (const lbl of labels) {
-            if (txt.toLowerCase().includes(lbl.toLowerCase())) {
-              const valEl = item.querySelector('.value, td:nth-child(2), dd, span:last-child');
-              if (valEl && valEl.textContent) return valEl.textContent.trim();
+            const lblLower = lbl.toLowerCase();
+            const labelSpan = Array.from(el.children).find(child => child.textContent && child.textContent.trim().toLowerCase() === lblLower);
+            if (labelSpan) {
+              const valueSpan = Array.from(el.children).find(child => child !== labelSpan && child.textContent && child.textContent.trim().length > 0);
+              if (valueSpan) return valueSpan.textContent.trim();
+            }
+
+            if (txt.toLowerCase().includes(lblLower)) {
+              const valEl = el.querySelector('.value, td:nth-child(2), dd, span:last-child, p:last-child');
+              if (valEl && valEl !== el && valEl.textContent && valEl.textContent.trim().toLowerCase() !== lblLower) {
+                return valEl.textContent.trim();
+              }
               const parts = txt.split(/[:\n\t]/);
-              if (parts.length > 1) return parts[parts.length - 1].trim();
+              if (parts.length > 1 && parts[0].toLowerCase().includes(lblLower)) {
+                return parts[parts.length - 1].trim();
+              }
             }
           }
         }
         return '';
       };
 
-      const fullTitle = nextDataProps.title ||
-                        getDOMText(['[data-test="heading"]', 'h1.heading-sm', '#car-title', 'h1.title', 'h1']) ||
-                        jsonLdData.name ||
-                        getMeta(['og:title', 'title']);
+      // --- FIELD EXTRACTIONS ---
+
+      const rawHeadingText = getDOMText(['[data-test="heading"]', '[data-test="title"]', '.vehicle-title', 'h1.heading-sm', 'h1.title', 'h1']) ||
+                             nextDataProps.title ||
+                             jsonLdData.name ||
+                             getMeta(['og:title', 'title']);
+
+      const rawVariantText = getDOMText(['[data-test="variant"]', '[data-test="subtitle"]', '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading']) ||
+                             nextDataProps.variant ||
+                             nextDataProps.trim ||
+                             jsonLdData.model || '';
 
       let title = '';
       let titleDescription = '';
 
       const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
       const modelName = nextDataProps.model || jsonLdData.model || '';
-      const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
+      const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (rawHeadingText.match(/\b(19\d\d|20\d\d)\b/) ? rawHeadingText.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
 
-      if (brandName && modelName) {
-        title = `${yearVal} ${brandName} ${modelName}`.trim();
-        titleDescription = fullTitle.replace(title, '').trim();
-        if (!titleDescription && fullTitle !== title) {
-          titleDescription = fullTitle.replace(/^\d{4}\s+/, '').trim();
+      if (rawVariantText) {
+        titleDescription = rawVariantText.trim();
+        if (rawHeadingText.includes(rawVariantText)) {
+          title = rawHeadingText.replace(rawVariantText, '').trim();
+        } else {
+          title = rawHeadingText.trim();
         }
+      } else if (brandName && modelName) {
+        title = `${yearVal} ${brandName} ${modelName}`.trim();
+        titleDescription = rawHeadingText.replace(title, '').trim();
       } else {
-        const m = fullTitle.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
+        const m = rawHeadingText.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
         if (m && m[2].trim()) {
           title = m[1].trim();
           titleDescription = m[2].trim();
         } else {
-          title = fullTitle;
-          titleDescription = getDOMText(['.variant-title', '.sub-heading']) || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.replace(/^\d{4}\s+/, '').trim() : '');
+          title = rawHeadingText;
+          titleDescription = '';
         }
       }
 
-      const year = yearVal || getSpecByLabel(['Year', 'Registration Year']) || getDOMText(['#spec-year']);
+      // 3. Year
+      const year = yearVal ||
+                   crawlSpecByLabel(['Year', 'Registration Year', 'Model Year']) ||
+                   getDOMText(['[data-test="year"]', '#spec-year']);
 
+      // 4. Kilometers Driven
       const kilometersDriven = nextDataProps.mileage ||
                                jsonLdData.mileageFromOdometer?.value ||
                                jsonLdData.mileageFromOdometer ||
-                               getSpecByLabel(['Kilometers Driven', 'Mileage', 'Odometer']) ||
-                               getDOMText(['#spec-mileage', '[data-test="mileage"]', '.spec-mileage']);
+                               getDOMText(['[data-test="mileage"]', '[data-test="kilometers"]', '#spec-mileage', '.spec-mileage']) ||
+                               crawlSpecByLabel(['Kilometers Driven', 'Kilometers', 'Mileage', 'Odometer', 'Km']);
 
+      // 5. Transmission
       const transmission = nextDataProps.transmission ||
                            jsonLdData.vehicleTransmission ||
-                           getSpecByLabel(['Transmission', 'Gearbox']) ||
-                           getDOMText(['#spec-transmission']);
+                           getDOMText(['[data-test="transmission"]', '#spec-transmission']) ||
+                           crawlSpecByLabel(['Transmission', 'Gearbox']);
 
+      // 6. Fuel
       const fuel = nextDataProps.fuel ||
                    jsonLdData.fuelType ||
-                   getSpecByLabel(['Fuel', 'Fuel Type']) ||
-                   getDOMText(['#spec-fuel']);
+                   getDOMText(['[data-test="fuel"]', '[data-test="fuel-type"]', '#spec-fuel']) ||
+                   crawlSpecByLabel(['Fuel Type', 'Fuel']);
 
+      // 7. 4x2 / 4x4 (Drivetrain)
       const drivetrain = nextDataProps.drivetrain ||
                          jsonLdData.driveWheelConfiguration ||
-                         getSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type']) ||
-                         getDOMText(['#spec-drivetrain']);
+                         getDOMText(['[data-test="drivetrain"]', '#spec-drivetrain']) ||
+                         crawlSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type', 'Wheel Drive']);
 
+      // 8. Body Color
       const bodyColor = nextDataProps.colour ||
+                        nextDataProps.color ||
                         jsonLdData.color ||
-                        getSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']) ||
-                        getDOMText(['#spec-colour']);
+                        getDOMText(['[data-test="colour"]', '[data-test="color"]', '#spec-colour']) ||
+                        crawlSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']);
 
+      // 9. Condition
       const condition = nextDataProps.condition ||
                         (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') ||
-                        getSpecByLabel(['Condition', 'Vehicle Condition']) ||
-                        getDOMText(['#spec-condition']);
+                        getDOMText(['[data-test="condition"]', '#spec-condition']) ||
+                        crawlSpecByLabel(['Condition', 'Vehicle Condition']);
 
-      const pricingSummary = nextDataProps.pricingSummary ||
-                             getDOMText(['[data-test="pricing-summary"]', '.price-summary', '#car-price-summary', '.pricing-container']) ||
-                             (getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ? `${getDOMText(['[data-test="price"]', '#car-price', '.price-amount'])} ${getDOMText(['[data-test="est-installment"]', '.est-payment'])}`.trim() : '') ||
-                             (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
+      // 10. Pricing Summary (Price + Installment text)
+      const cashPriceText = getDOMText(['[data-test="price"]', '.price-amount', '#car-price', '.heading-lg.price']) ||
+                            (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
 
+      const installmentText = getDOMText(['[data-test="est-installment"]', '[data-test="installment"]', '.est-payment', '.finance-est']) ||
+                              (nextDataProps.installment ? `Est. ${nextDataProps.installment}` : '');
+
+      let pricingSummary = nextDataProps.pricingSummary ||
+                           getDOMText(['[data-test="pricing-summary"]', '#car-price-summary', '.price-summary']);
+
+      if (!pricingSummary && cashPriceText) {
+        pricingSummary = installmentText ? `${cashPriceText} / ${installmentText}` : cashPriceText;
+      }
+
+      // 11. Dealer Name
       const dealerName = nextDataProps.dealer?.name ||
                          jsonLdData.offers?.seller?.name ||
-                         getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title']);
+                         getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title', '.dealer-title', 'a[href*="/dealers/"]']);
 
+      // 12. Dealer Address / Location
       const dealerAddress = nextDataProps.dealer?.address ||
                             nextDataProps.location ||
-                            getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text']);
+                            getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text', '.dealer-location']);
 
-      const averageRating = nextDataProps.dealer?.rating ||
-                            (jsonLdData.offers?.seller?.aggregateRating ? `${jsonLdData.offers.seller.aggregateRating.ratingValue} (${jsonLdData.offers.seller.aggregateRating.reviewCount || ''} Reviews)`.trim() : '') ||
-                            getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge']);
+      // 13. Average Rating
+      let averageRating = nextDataProps.dealer?.rating || getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
 
-      const rawFeatures = nextDataProps.features ||
-                          getDOMList(['[data-test="features"] li', '#car-features li', '.features-list li']);
+      if (!averageRating && jsonLdData.offers?.seller?.aggregateRating) {
+        const agg = jsonLdData.offers.seller.aggregateRating;
+        averageRating = `${agg.ratingValue}${agg.reviewCount ? ` (${agg.reviewCount} Reviews)` : ''}`;
+      }
 
+      // 14. Features
+      let featuresList = nextDataProps.features ||
+                         getDOMList(['[data-test="features"] li', '[data-test="feature-item"]', '#car-features li', '.features-list li', '.equipment-list li', '[class*="feature"] li']);
+
+      if ((!featuresList || featuresList.length === 0)) {
+        const featureEls = doc.querySelectorAll('[data-test*="feature"], .feature-item, .equipment-item');
+        if (featureEls && featureEls.length > 0) {
+          featuresList = Array.from(featureEls).map(el => el.textContent.trim()).filter(Boolean);
+        }
+      }
+
+      // 15. Description
       const description = nextDataProps.description ||
                           jsonLdData.description ||
-                          getMeta(['og:description', 'description']) ||
-                          getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description']);
+                          getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description', '.description-text', '#description']) ||
+                          getMeta(['og:description', 'description']);
 
+      // 16. Price (Cash price numeric string)
       const rawPrice = nextDataProps.price ||
                        jsonLdData.offers?.price ||
-                       getMeta(['product:price:amount']) ||
-                       getDOMText(['[data-test="price"]', '#car-price', '.price-amount']);
+                       getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ||
+                       getMeta(['product:price:amount']);
 
+      // 17. Source URL (Canonical URL)
       const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                         doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                         getMeta(['og:url']) ||
@@ -294,7 +373,7 @@
         dealerName,
         dealerAddress,
         averageRating,
-        features: rawFeatures,
+        features: featuresList,
         description,
         price: rawPrice,
         sourceUrl
@@ -402,7 +481,7 @@
     widget.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <div style="font-weight:700; color:#60a5fa; font-size:1rem; display:flex; align-items:center; gap:6px;">
-          <span>🚗 Car Data Helper (v2.0.1)</span>
+          <span>🚗 Car Data Helper (v2.0.2)</span>
         </div>
         <button id="cdh-toggle-btn" style="background:transparent; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer; padding:2px 6px;">−</button>
       </div>
