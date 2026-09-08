@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>2023 BMW M3 Competition M xDrive for sale in Gauteng Sandton - Cars.co.za</title>
+  <link rel="canonical" href="https://www.cars.co.za/for-sale/used/2023-BMW-M3-Competition-M-xDrive-Gauteng-Sandton/11229988/">
+</head>
+<body>
+  <div id="cars-co-za-marker"></div>
+
+  <div class="vehicle-view">
+    <h1 data-test="heading">2023 BMW M3</h1>
+    <div data-test="variant">Competition M xDrive</div>
+
+    <!-- SPECS BADGES -->
+    <div class="specs-wrapper">
+      <div><span>2023</span></div>
+      <div><span>12 500 km</span></div>
+      <div><span>Automatic</span></div>
+      <div><span>Petrol</span></div>
+      <div><span>4x4</span></div>
+      <div><span>Black</span></div>
+      <div><span>Excellent condition</span></div>
+    </div>
+
+    <!-- PRICING -->
+    <div class="pricing-card">
+      <div class="price-cash">R 1 899 000</div>
+      <div class="price-installment">Est. R 33 850 p/m</div>
+    </div>
+
+    <!-- DEALER -->
+    <div class="dealer-section">
+      <div class="dealer-info">
+        <a href="/dealers/sandton-auto-bmw/" class="dealer-title">Sandton Auto BMW</a>
+        <div class="dealer-address">Sandton, Gauteng</div>
+      </div>
+      <div class="dealer-rating">
+        <span>4.8</span>
+        <span>(115 Reviews)</span>
+      </div>
+    </div>
+
+    <!-- FEATURES -->
+    <div data-test="features">
+      <ul>
+        <li>Harman Kardon Sound System</li>
+        <li>Carbon Fibre Roof</li>
+        <li>Head-up Display</li>
+        <li>Adaptive M Suspension</li>
+      </ul>
+    </div>
+
+    <!-- DESCRIPTION WITH SHOW MORE BUTTON -->
+    <div class="description-section">
+      <h3>Seller Description</h3>
+      <div class="description-content">
+        <p>Pristine 2023 BMW M3 Competition M xDrive finished in Black Sapphire Metallic with Silverstone Merino Leather.</p>
+        <p>Featuring the full M Carbon exterior package, 19/20-inch M forged wheels, Harman Kardon surround audio, and BMW Drive Recorder. Full balance of BMW Motorplan valid until 2028.</p>
+        <button type="button" class="btn-show-more">Show more</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="normalizers.js"></script>
+  <script src="validators.js"></script>
+  <script src="source-extractor.js"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const res = window.CarSourceExtractor.extractFromDocument(document);
+      const pre = document.createElement('pre');
+      pre.id = 'bmw-out';
+      pre.textContent = JSON.stringify(res.normalized, null, 2);
+      document.body.appendChild(pre);
+    });
+  </script>
+</body>
+</html>

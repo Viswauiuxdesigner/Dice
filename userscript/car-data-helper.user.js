@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.6
+// @version      2.0.7
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -16,6 +16,8 @@
 
 (function () {
   'use strict';
+
+  const SCRIPT_VERSION = '2.0.7';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -479,34 +481,77 @@
       let dealerAddress = '';
       let averageRating = '';
 
-      // Look for dealer link or dealer name in DOM
-      const dealerLink = doc.querySelector('a[href*="/dealers/"], a[href*="/dealer/"]');
-      if (dealerLink) {
-        dealerName = (dealerLink.textContent || '').trim();
-      }
-      if (!dealerName) {
-        dealerName = getSelectorText(doc, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '.dealer-name', '.seller-info__title', '.dealer-title', '#dealer-name']);
-      }
-      if (!dealerName) {
-        const dealerHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller|Dealer)\s*(?:Details|Information|Info)$/i.test(el.textContent.trim()));
-        if (dealerHeading) {
-          const card = dealerHeading.closest('div, section, aside') || dealerHeading.parentElement;
-          const nameEl = card.querySelector('.dealer-name, strong, h3, h4, a');
-          if (nameEl && nameEl !== dealerHeading) dealerName = nameEl.textContent.trim();
-        }
-      }
-      if (!dealerName) {
-        dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
-      }
-
       // Dealer Address
       dealerAddress = getSelectorText(doc, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.dealer-address', '.seller-info__address', '.dealer-location']);
+      let locLeaf = null;
       if (!dealerAddress) {
-        const locLeaf = allLeafElements.find(item => /\b(Sandton|Cape Town|Johannesburg|Durban|Pretoria|Centurion|Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape)\b/i.test(item.text) && item.text.length < 50 && !item.text.startsWith('R'));
+        locLeaf = allLeafElements.find(item => /\b(Sandton|Cape Town|Johannesburg|Durban|Pretoria|Centurion|Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape)\b/i.test(item.text) && item.text.length < 50 && !item.text.startsWith('R'));
         if (locLeaf) dealerAddress = locLeaf.text;
       }
       if (!dealerAddress) {
         dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
+      }
+
+      // Dealer Name
+      if (locLeaf && locLeaf.el) {
+        const dealerContainer = locLeaf.el.closest('[class*="dealer"], [class*="seller"], [data-test*="dealer"], [data-testid*="dealer"], aside, section, div[style*="border"], div') || locLeaf.el.parentElement?.parentElement;
+        if (dealerContainer && dealerContainer !== doc.body) {
+          const nameEl = dealerContainer.querySelector('[data-test*="dealer-name"], [data-testid*="dealer-name"], [class*="dealer-name"], [class*="dealer__name"], [class*="seller-name"], [class*="dealerTitle"], strong, h2, h3, h4, h5, h6, a[href*="/dealers/"], a[href*="/dealer/"]');
+          if (nameEl) {
+            const txt = (nameEl.textContent || '').trim();
+            if (txt && !/^(?:seller|dealer|dealership)\s*(?:details|information|info|overview)$/i.test(txt) && txt !== dealerAddress && !/^\d+(\.\d+)?\s*(?:reviews?|\(\d+\))/i.test(txt)) {
+              dealerName = txt;
+            }
+          }
+          if (!dealerName && locLeaf.el.previousElementSibling) {
+            const prevTxt = (locLeaf.el.previousElementSibling.textContent || '').trim();
+            if (prevTxt && prevTxt.length < 60 && !/^(?:seller|dealer)\s*(?:details|info)/i.test(prevTxt)) {
+              dealerName = prevTxt;
+            }
+          }
+          if (!dealerName) {
+            const imgEl = dealerContainer.querySelector('img[alt]');
+            if (imgEl && imgEl.alt && !/logo|icon|avatar|dealer|seller/i.test(imgEl.alt.trim())) {
+              dealerName = imgEl.alt.trim();
+            }
+          }
+        }
+      }
+
+      if (!dealerName) {
+        dealerName = getSelectorText(doc, [
+          '[data-test="dealer-name"]', '[data-testid="dealer-name"]',
+          '.dealer-name', '[class*="dealer-name"]', '[class*="dealer__name"]',
+          '.seller-info__title', '.dealer-title', '#dealer-name'
+        ]);
+      }
+      if (!dealerName) {
+        const dealerLink = doc.querySelector('a[href*="/dealers/"], a[href*="/dealer/"], a[href*="/seller/"]');
+        if (dealerLink) {
+          const txt = (dealerLink.textContent || '').trim();
+          if (txt && !/view all|all cars|contact|directions/i.test(txt)) {
+            dealerName = txt;
+          }
+        }
+      }
+      if (!dealerName) {
+        const dealerHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller|Dealer|Dealership)\s*(?:Details|Information|Info)$/i.test(el.textContent.trim()));
+        if (dealerHeading) {
+          const card = dealerHeading.closest('div, section, aside') || dealerHeading.parentElement;
+          const candidateEls = card.querySelectorAll('.dealer-name, strong, h3, h4, h5, a, p, span');
+          for (const el of candidateEls) {
+            if (el !== dealerHeading) {
+              const txt = (el.textContent || '').trim();
+              if (txt && txt.length > 1 && txt.length < 60 && txt !== dealerAddress && !/^(?:seller|dealer|dealership)\s*(?:details|info|information)$/i.test(txt) && !/^\d+(\.\d+)?/i.test(txt)) {
+                dealerName = txt;
+                break;
+              }
+            }
+          }
+        }
+      }
+      if (!dealerName) {
+        dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
       }
 
       // Average Rating
@@ -570,27 +615,51 @@
         }
       }
 
-      // --- 15. DESCRIPTION ---
+      // --- 15. DESCRIPTION (with Show More expansion) ---
       let description = '';
-      const descHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller\s+|Dealer\s+)?(?:Description|Comments)$/i.test(el.textContent.trim()));
-      if (descHeading) {
-        let candidateEl = descHeading.nextElementSibling;
-        while (candidateEl && !description) {
-          const pEl = candidateEl.querySelector('p, [class*="content"], [class*="text"], [class*="body"]') || (candidateEl.tagName === 'P' || candidateEl.tagName === 'DIV' ? candidateEl : null);
-          if (pEl) {
-            let txt = (pEl.textContent || '').trim();
-            txt = txt.replace(/^(?:Seller\s+|Dealer\s+)?Description\s*/i, '').replace(/Read\s*more\s*$/i, '').trim();
-            if (txt.length > 20 && !txt.toLowerCase().includes('back to search')) {
-              description = txt;
-              break;
-            }
-          }
-          candidateEl = candidateEl.nextElementSibling;
+      let descContainer = doc.querySelector('[data-test="description"], [data-testid="description"], #car-description, .description-content, .vehicle-description, .description-text, [class*="description-section"], [class*="description-content"], section[class*="description"]');
+
+      if (!descContainer) {
+        const descHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b, button, summary')).find(el => /^(?:Seller\s+|Dealer\s+|Vehicle\s+)?(?:Description|Comments|Overview)$/i.test(el.textContent.trim()));
+        if (descHeading) {
+          descContainer = descHeading.closest('section, article, div[class*="description"], div[class*="card"], div') || descHeading.parentElement;
         }
       }
-      if (!description) {
-        description = getSelectorText(doc, ['[data-test="description"]', '[data-testid="description"]', '#car-description', '.vehicle-description', '.description-content', '.description-text']);
+
+      if (descContainer) {
+        // Programmatically trigger Show More if present
+        const expandBtns = descContainer.querySelectorAll('button, a, [role="button"], span, div');
+        for (const btn of expandBtns) {
+          const btnTxt = (btn.textContent || '').trim();
+          if (/^(?:show\s*more|read\s*more|view\s*more|expand|\.\.\.\s*more)$/i.test(btnTxt)) {
+            try {
+              btn.click();
+            } catch (e) {}
+            break;
+          }
+        }
+
+        const paragraphs = Array.from(descContainer.querySelectorAll('p')).map(p => (p.textContent || '').trim()).filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+)?description$/i.test(p) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(p));
+        if (paragraphs.length > 0) {
+          description = paragraphs.join('\n\n');
+        } else {
+          const contentEl = descContainer.querySelector('[class*="content"], [class*="text"], [class*="body"]') || descContainer;
+          description = (contentEl.textContent || '').trim();
+        }
       }
+
+      if (description) {
+        description = description
+          .replace(/^(?:Seller\s+|Dealer\s+|Vehicle\s+)?Description\s*:?\s*/i, '')
+          .replace(/(?:Show|Read|View)\s*(?:more|less)\s*$/i, '')
+          .replace(/^(?:Show|Read|View)\s*(?:more|less)\s*/i, '')
+          .trim();
+
+        if (description.toLowerCase().includes('back to search') || description.length < 20) {
+          description = '';
+        }
+      }
+
       if (!description) {
         description = nextDataProps.description || '';
       }
@@ -724,7 +793,7 @@
           <span style="font-size:16px;">🚗</span>
           <div>
             <strong style="font-size:13px; letter-spacing:0.3px;">Car Data Entry Helper</strong>
-            <span style="font-size:10px; background:#3b82f6; color:#ffffff; padding:2px 6px; border-radius:10px; margin-left:6px; font-weight:700;">v2.0.5</span>
+            <span style="font-size:10px; background:#3b82f6; color:#ffffff; padding:2px 6px; border-radius:10px; margin-left:6px; font-weight:700;">v${SCRIPT_VERSION}</span>
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
