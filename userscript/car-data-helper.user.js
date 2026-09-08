@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.2
+// @version      2.0.3
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -44,8 +44,12 @@
     normalizeTransmission(val) {
       if (!val) return '';
       const str = String(val).toLowerCase();
-      if (str.includes('auto') || str.includes('steptronic') || str.includes('cvt') || str.includes('dsg')) return 'Automatic';
-      if (str.includes('manual') || str.includes('stick')) return 'Manual';
+      if (str.includes('auto') || str.includes('steptronic') || str.includes('cvt') || str.includes('dsg') || str.includes('dual clutch')) {
+        return 'Automatic';
+      }
+      if (str.includes('manual') || str.includes('stick')) {
+        return 'Manual';
+      }
       return this.cleanText(val);
     },
     normalizeFuel(val) {
@@ -53,14 +57,14 @@
       const str = String(val).toLowerCase();
       if (str.includes('petrol') || str.includes('gasoline')) return 'Petrol';
       if (str.includes('diesel')) return 'Diesel';
-      if (str.includes('hybrid')) return 'Hybrid';
+      if (str.includes('hybrid') || str.includes('phev')) return 'Hybrid';
       if (str.includes('electric') || str.includes('ev')) return 'Electric';
       return this.cleanText(val);
     },
     normalize4x2Or4x4(val) {
       if (!val) return '';
       const str = String(val).toLowerCase();
-      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel')) return '4x4';
+      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel') || str.includes('four-wheel')) return '4x4';
       if (str.includes('4x2') || str.includes('fwd') || str.includes('rwd') || str.includes('front') || str.includes('rear') || str.includes('two-wheel')) return '4x2';
       return this.cleanText(val);
     },
@@ -87,7 +91,7 @@
       }
       if (key === 'year') {
         const num = Number(value);
-        if (isNaN(num) || num < 1900 || num > new Date().getFullYear() + 1) {
+        if (isNaN(num) || num < 1900 || num > new Date().getFullYear() + 2) {
           return { status: 'missing', label: 'Missing / Needs Review' };
         }
       }
@@ -102,11 +106,11 @@
     }
   };
 
-  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER (Multi-Strategy Cascader) ---
+  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER (Field-Specific Multi-Strategy Cascader) ---
   const CarsCoZaAdapter = {
     canHandle(doc) {
       const url = doc.location?.href || '';
-      return url.includes('cars.co.za') || doc.querySelector('#cars-co-za-marker') !== null || doc.title.includes('Cars.co.za');
+      return url.includes('cars.co.za') || doc.querySelector('#cars-co-za-marker') !== null || (doc.title && doc.title.includes('Cars.co.za'));
     },
     extract(doc) {
       if (!doc) doc = document;
@@ -155,27 +159,19 @@
         });
       } catch (e) {}
 
-      // Helpers
-      const getDOMText = (selectors) => {
+      // Scoped DOM Helpers
+      const getSelectorText = (root, selectors) => {
+        if (!root) return '';
         for (const sel of selectors) {
-          const el = doc.querySelector(sel);
-          if (el) {
-            const txt = el.textContent || el.getAttribute('content') || el.value;
-            if (txt && txt.trim().length > 0) return txt.trim();
-          }
+          try {
+            const el = root.querySelector(sel);
+            if (el) {
+              const txt = el.textContent || el.getAttribute('content') || el.value || '';
+              if (txt && txt.trim().length > 0) return txt.trim();
+            }
+          } catch (e) {}
         }
         return '';
-      };
-
-      const getDOMList = (selectors) => {
-        for (const sel of selectors) {
-          const elements = doc.querySelectorAll(sel);
-          if (elements && elements.length > 0) {
-            const list = Array.from(elements).map(el => el.textContent.trim()).filter(Boolean);
-            if (list.length > 0) return list;
-          }
-        }
-        return [];
       };
 
       const getMeta = (props) => {
@@ -186,174 +182,408 @@
         return '';
       };
 
-      const crawlSpecByLabel = (labels) => {
-        const candidateElements = doc.querySelectorAll('div, span, p, tr, li, dl, dt, [class*="spec"], [class*="detail"], [data-test]');
-        for (const el of candidateElements) {
-          const txt = el.textContent || '';
-          if (!txt) continue;
-
-          for (const lbl of labels) {
-            const lblLower = lbl.toLowerCase();
-            const labelSpan = Array.from(el.children).find(child => child.textContent && child.textContent.trim().toLowerCase() === lblLower);
-            if (labelSpan) {
-              const valueSpan = Array.from(el.children).find(child => child !== labelSpan && child.textContent && child.textContent.trim().length > 0);
-              if (valueSpan) return valueSpan.textContent.trim();
-            }
-
-            if (txt.toLowerCase().includes(lblLower)) {
-              const valEl = el.querySelector('.value, td:nth-child(2), dd, span:last-child, p:last-child');
-              if (valEl && valEl !== el && valEl.textContent && valEl.textContent.trim().toLowerCase() !== lblLower) {
-                return valEl.textContent.trim();
-              }
-              const parts = txt.split(/[:\n\t]/);
-              if (parts.length > 1 && parts[0].toLowerCase().includes(lblLower)) {
-                return parts[parts.length - 1].trim();
-              }
+      const findSectionContainer = (headings, explicitSelectors = []) => {
+        for (const sel of explicitSelectors) {
+          try {
+            const el = doc.querySelector(sel);
+            if (el) return el;
+          } catch (e) {}
+        }
+        const headingElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b');
+        for (const h of headingElements) {
+          const text = (h.textContent || '').trim().toLowerCase();
+          for (const target of headings) {
+            if (text === target.toLowerCase() || (text.includes(target.toLowerCase()) && text.length < target.length + 15)) {
+              return h.closest('section, article, div[class*="section"], div[class*="card"], div[class*="container"], div[class*="block"]') || h.parentElement;
             }
           }
         }
-        return '';
+        return null;
       };
 
-      // --- FIELD EXTRACTIONS ---
+      // --- 1 & 2. TITLE & TITLE DESCRIPTION ---
+      const h1El = doc.querySelector('[data-test="heading"], [data-testid="heading"], [data-test="title"], [data-testid="title"], h1.heading-sm, h1.title, h1');
+      let rawHeadingText = h1El ? (h1El.textContent || '').trim() : '';
+      if (!rawHeadingText) {
+        rawHeadingText = nextDataProps.title || nextDataProps.heading || (typeof jsonLdData.name === 'string' ? jsonLdData.name : '') || getMeta(['og:title', 'title']);
+      }
+      rawHeadingText = rawHeadingText.replace(/\s+for\s+sale.*$/i, '').replace(/\s*-\s*R\s*[\d\s,.]+.*$/i, '').trim();
 
-      const rawHeadingText = getDOMText(['[data-test="heading"]', '[data-test="title"]', '.vehicle-title', 'h1.heading-sm', 'h1.title', 'h1']) ||
-                             nextDataProps.title ||
-                             jsonLdData.name ||
-                             getMeta(['og:title', 'title']);
+      // Explicit variant/subtitle lookup
+      let rawVariantText = getSelectorText(doc, [
+        '[data-test="variant"]', '[data-testid="variant"]',
+        '[data-test="subtitle"]', '[data-testid="subtitle"]',
+        '[data-test="derivative"]', '[data-testid="derivative"]',
+        '[data-test="sub-heading"]', '[data-testid="sub-heading"]',
+        '[data-test="trim"]', '[data-testid="trim"]',
+        '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading', '.subHeading', '.derivative', '.trim'
+      ]);
 
-      const rawVariantText = getDOMText(['[data-test="variant"]', '[data-test="subtitle"]', '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading']) ||
-                             nextDataProps.variant ||
-                             nextDataProps.trim ||
-                             jsonLdData.model || '';
+      if (!rawVariantText && h1El && h1El.nextElementSibling) {
+        const sib = h1El.nextElementSibling;
+        const sibTxt = (sib.textContent || '').trim();
+        if (sibTxt && sibTxt.length > 0 && sibTxt.length < 60 && !sibTxt.startsWith('R') && !/\b(reviews|gauteng|cape town|western cape|kwazulu|sandton|durban|johannesburg)\b/i.test(sibTxt)) {
+          rawVariantText = sibTxt;
+        }
+      }
+
+      if (!rawVariantText) {
+        rawVariantText = nextDataProps.variant || nextDataProps.derivative || nextDataProps.trim || nextDataProps.subTitle || nextDataProps.subtitle || '';
+      }
 
       let title = '';
       let titleDescription = '';
 
-      const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
-      const modelName = nextDataProps.model || jsonLdData.model || '';
-      const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (rawHeadingText.match(/\b(19\d\d|20\d\d)\b/) ? rawHeadingText.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
-
-      if (rawVariantText) {
+      if (rawVariantText && rawVariantText.toLowerCase() !== rawHeadingText.toLowerCase()) {
         titleDescription = rawVariantText.trim();
-        if (rawHeadingText.includes(rawVariantText)) {
-          title = rawHeadingText.replace(rawVariantText, '').trim();
+        if (rawHeadingText.toLowerCase().endsWith(rawVariantText.toLowerCase())) {
+          title = rawHeadingText.substring(0, rawHeadingText.length - rawVariantText.length).trim();
+        } else if (rawHeadingText.toLowerCase().includes(rawVariantText.toLowerCase())) {
+          title = rawHeadingText.replace(new RegExp(rawVariantText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').trim();
         } else {
           title = rawHeadingText.trim();
         }
-      } else if (brandName && modelName) {
-        title = `${yearVal} ${brandName} ${modelName}`.trim();
-        titleDescription = rawHeadingText.replace(title, '').trim();
       } else {
-        const m = rawHeadingText.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
-        if (m && m[2].trim()) {
-          title = m[1].trim();
-          titleDescription = m[2].trim();
+        const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
+        const modelName = nextDataProps.model || jsonLdData.model || '';
+        const yearMatch = rawHeadingText.match(/\b(19\d\d|20\d\d)\b/);
+        const yrVal = nextDataProps.year || (yearMatch ? yearMatch[1] : '');
+
+        if (brandName && modelName) {
+          const expectedBase = `${yrVal ? yrVal + ' ' : ''}${brandName} ${modelName}`.trim();
+          if (rawHeadingText.toLowerCase().startsWith(expectedBase.toLowerCase()) && rawHeadingText.length > expectedBase.length) {
+            title = expectedBase;
+            titleDescription = rawHeadingText.substring(expectedBase.length).trim();
+          } else {
+            title = rawHeadingText;
+            titleDescription = '';
+          }
         } else {
-          title = rawHeadingText;
-          titleDescription = '';
+          const m = rawHeadingText.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)\s+(.+)$/);
+          if (m && m[2] && m[2].trim()) {
+            title = m[1].trim();
+            titleDescription = m[2].trim();
+          } else {
+            title = rawHeadingText;
+            titleDescription = '';
+          }
         }
       }
 
-      // 3. Year
-      const year = yearVal ||
-                   crawlSpecByLabel(['Year', 'Registration Year', 'Model Year']) ||
-                   getDOMText(['[data-test="year"]', '#spec-year']);
-
-      // 4. Kilometers Driven
-      const kilometersDriven = nextDataProps.mileage ||
-                               jsonLdData.mileageFromOdometer?.value ||
-                               jsonLdData.mileageFromOdometer ||
-                               getDOMText(['[data-test="mileage"]', '[data-test="kilometers"]', '#spec-mileage', '.spec-mileage']) ||
-                               crawlSpecByLabel(['Kilometers Driven', 'Kilometers', 'Mileage', 'Odometer', 'Km']);
-
-      // 5. Transmission
-      const transmission = nextDataProps.transmission ||
-                           jsonLdData.vehicleTransmission ||
-                           getDOMText(['[data-test="transmission"]', '#spec-transmission']) ||
-                           crawlSpecByLabel(['Transmission', 'Gearbox']);
-
-      // 6. Fuel
-      const fuel = nextDataProps.fuel ||
-                   jsonLdData.fuelType ||
-                   getDOMText(['[data-test="fuel"]', '[data-test="fuel-type"]', '#spec-fuel']) ||
-                   crawlSpecByLabel(['Fuel Type', 'Fuel']);
-
-      // 7. 4x2 / 4x4 (Drivetrain)
-      const drivetrain = nextDataProps.drivetrain ||
-                         jsonLdData.driveWheelConfiguration ||
-                         getDOMText(['[data-test="drivetrain"]', '#spec-drivetrain']) ||
-                         crawlSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type', 'Wheel Drive']);
-
-      // 8. Body Color
-      const bodyColor = nextDataProps.colour ||
-                        nextDataProps.color ||
-                        jsonLdData.color ||
-                        getDOMText(['[data-test="colour"]', '[data-test="color"]', '#spec-colour']) ||
-                        crawlSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']);
-
-      // 9. Condition
-      const condition = nextDataProps.condition ||
-                        (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') ||
-                        getDOMText(['[data-test="condition"]', '#spec-condition']) ||
-                        crawlSpecByLabel(['Condition', 'Vehicle Condition']);
-
-      // 10. Pricing Summary (Price + Installment text)
-      const cashPriceText = getDOMText(['[data-test="price"]', '.price-amount', '#car-price', '.heading-lg.price']) ||
-                            (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
-
-      const installmentText = getDOMText(['[data-test="est-installment"]', '[data-test="installment"]', '.est-payment', '.finance-est']) ||
-                              (nextDataProps.installment ? `Est. ${nextDataProps.installment}` : '');
-
-      let pricingSummary = nextDataProps.pricingSummary ||
-                           getDOMText(['[data-test="pricing-summary"]', '#car-price-summary', '.price-summary']);
-
-      if (!pricingSummary && cashPriceText) {
-        pricingSummary = installmentText ? `${cashPriceText} / ${installmentText}` : cashPriceText;
+      if (titleDescription && titleDescription.toLowerCase() === title.toLowerCase()) {
+        titleDescription = '';
       }
 
-      // 11. Dealer Name
-      const dealerName = nextDataProps.dealer?.name ||
-                         jsonLdData.offers?.seller?.name ||
-                         getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title', '.dealer-title', 'a[href*="/dealers/"]']);
+      // --- SCOPED SPECIFICATION HARVESTING (Zero cross-contamination) ---
+      const specTableMap = {};
+      const specRows = doc.querySelectorAll('table tr, dl > div, dl tr, [class*="spec-item"], [class*="detail-item"], [class*="spec-row"]');
+      specRows.forEach(row => {
+        const labelEl = row.querySelector('td:first-child, th, dt, [class*="label"], [class*="name"]');
+        const valEl = row.querySelector('td:last-child, dd, [class*="value"]');
+        if (labelEl && valEl && labelEl !== valEl) {
+          const l = labelEl.textContent.trim().toLowerCase();
+          const v = valEl.textContent.trim();
+          if (l && v) specTableMap[l] = v;
+        }
+      });
 
-      // 12. Dealer Address / Location
-      const dealerAddress = nextDataProps.dealer?.address ||
-                            nextDataProps.location ||
-                            getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text', '.dealer-location']);
+      const summaryChips = [];
+      const chipContainers = doc.querySelectorAll('[data-test*="spec"], [data-testid*="spec"], [class*="quick-specs"], [class*="key-specs"], [class*="vehicle-specs"], [class*="overview"], [class*="chips"], [class*="summary-grid"], [class*="attributes"]');
+      chipContainers.forEach(container => {
+        const items = container.querySelectorAll('li, div[class*="chip"], div[class*="pill"], div[class*="item"], div[class*="spec"], span[class*="chip"], span[class*="item"], p');
+        items.forEach(it => {
+          const txt = (it.textContent || '').trim();
+          if (txt && txt.length > 0 && txt.length < 40 && !summaryChips.includes(txt)) {
+            summaryChips.push(txt);
+          }
+        });
+      });
 
-      // 13. Average Rating
-      let averageRating = nextDataProps.dealer?.rating || getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
+      // 3. Year
+      let year = nextDataProps.year || jsonLdData.vehicleModelDate || '';
+      if (!year) {
+        year = getSelectorText(doc, ['[data-test="year"]', '[data-testid="year"]', '#spec-year']);
+      }
+      if (!year) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/year|model year|registration/i.test(k) && /^(19\d\d|20\d\d)$/.test(v)) {
+            year = v;
+            break;
+          }
+        }
+      }
+      if (!year) {
+        const yrChip = summaryChips.find(c => /^(19\d\d|20\d\d)$/.test(c.trim()));
+        if (yrChip) year = yrChip.trim();
+      }
+      if (!year) {
+        const match = rawHeadingText.match(/\b(19\d\d|20\d\d)\b/);
+        if (match) year = match[1];
+      }
 
+      // 4. Kilometers Driven
+      let kilometersDriven = nextDataProps.mileage || jsonLdData.mileageFromOdometer?.value || (typeof jsonLdData.mileageFromOdometer === 'string' ? jsonLdData.mileageFromOdometer : '') || '';
+      if (!kilometersDriven) {
+        kilometersDriven = getSelectorText(doc, ['[data-test="mileage"]', '[data-testid="mileage"]', '[data-test="kilometers"]', '[data-testid="kilometers"]', '#spec-mileage', '.spec-mileage', '[data-test*="odometer"]']);
+      }
+      if (!kilometersDriven) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/mileage|kilometer|odometer|km/i.test(k) && /\d/.test(v)) {
+            kilometersDriven = v;
+            break;
+          }
+        }
+      }
+      if (!kilometersDriven) {
+        const kmChip = summaryChips.find(c => /\b\d[\d\s,.]*\s*(?:km|kms|kilometres|kilometers)\b/i.test(c));
+        if (kmChip) kilometersDriven = kmChip.trim();
+      }
+      if (kilometersDriven && (!/\d/.test(kilometersDriven) || /^(gtb|automatic|manual|petrol|diesel|red|white|blue|4x2|4x4)$/i.test(kilometersDriven))) {
+        kilometersDriven = '';
+      }
+
+      // 5. Transmission
+      let transmission = nextDataProps.transmission || nextDataProps.gearbox || jsonLdData.vehicleTransmission || '';
+      if (!transmission) {
+        transmission = getSelectorText(doc, ['[data-test="transmission"]', '[data-testid="transmission"]', '[data-test="gearbox"]', '#spec-transmission', '.spec-transmission']);
+      }
+      if (!transmission) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/transmission|gearbox/i.test(k) && /automatic|manual|semi|cvt|dual clutch/i.test(v)) {
+            transmission = v;
+            break;
+          }
+        }
+      }
+      if (!transmission) {
+        const transChip = summaryChips.find(c => /^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(c.trim()));
+        if (transChip) transmission = transChip.trim();
+      }
+      if (transmission && !/^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(transmission.trim())) {
+        transmission = '';
+      }
+
+      // 6. Fuel
+      let fuel = nextDataProps.fuel || nextDataProps.fuelType || nextDataProps.fuel_type || jsonLdData.fuelType || '';
+      if (!fuel) {
+        fuel = getSelectorText(doc, ['[data-test="fuel"]', '[data-testid="fuel"]', '[data-test="fuel-type"]', '#spec-fuel', '.spec-fuel']);
+      }
+      if (!fuel) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/fuel/i.test(k) && /petrol|diesel|hybrid|electric|phev|gas|lpg/i.test(v)) {
+            fuel = v;
+            break;
+          }
+        }
+      }
+      if (!fuel) {
+        const fuelChip = summaryChips.find(c => /^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(c.trim()));
+        if (fuelChip) fuel = fuelChip.trim();
+      }
+      if (fuel && !/^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(fuel.trim())) {
+        fuel = '';
+      }
+
+      // 7. 4x2 / 4x4
+      let drivetrain = nextDataProps.drivetrain || nextDataProps.drive || nextDataProps.driveType || nextDataProps.driveWheelConfiguration || jsonLdData.driveWheelConfiguration || '';
+      if (!drivetrain) {
+        drivetrain = getSelectorText(doc, ['[data-test="drivetrain"]', '[data-testid="drivetrain"]', '[data-test="drive"]', '#spec-drivetrain', '.spec-drivetrain']);
+      }
+      if (!drivetrain) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/4x2|4x4|drivetrain|drive\s*type|driven\s*wheels|wheel\s*drive/i.test(k)) {
+            drivetrain = v;
+            break;
+          }
+        }
+      }
+      if (!drivetrain) {
+        const dtChip = summaryChips.find(c => /^(4x2|4x4|fwd|rwd|awd|4wd|front-wheel drive|rear-wheel drive|all-wheel drive|four-wheel drive)$/i.test(c.trim()));
+        if (dtChip) drivetrain = dtChip.trim();
+      }
+      if (drivetrain) {
+        if (/4x4|awd|4wd|all-wheel|four-wheel/i.test(drivetrain)) drivetrain = '4x4';
+        else if (/4x2|fwd|rwd|front-wheel|rear-wheel|front wheel|rear wheel/i.test(drivetrain)) drivetrain = '4x2';
+        else drivetrain = '';
+      }
+
+      // 8. Body Color
+      let bodyColor = nextDataProps.colour || nextDataProps.color || nextDataProps.bodyColour || nextDataProps.bodyColor || nextDataProps.exteriorColor || jsonLdData.color || '';
+      if (!bodyColor) {
+        bodyColor = getSelectorText(doc, ['[data-test="colour"]', '[data-testid="colour"]', '[data-test="color"]', '[data-testid="color"]', '#spec-colour', '.spec-colour']);
+      }
+      if (!bodyColor) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/colou?r|body\s*colou?r/i.test(k) && !/^(gtb|automatic|petrol|4x2|4x4|\d+)$/i.test(v)) {
+            bodyColor = v;
+            break;
+          }
+        }
+      }
+      if (!bodyColor) {
+        const knownColors = ['red', 'white', 'black', 'silver', 'grey', 'gray', 'blue', 'yellow', 'green', 'orange', 'brown', 'bronze', 'gold', 'purple', 'beige', 'maroon', 'burgundy', 'charcoal', 'navy', 'rosso corsa', 'bianco', 'nero', 'giallo'];
+        const colorChip = summaryChips.find(c => knownColors.includes(c.trim().toLowerCase()));
+        if (colorChip) bodyColor = colorChip.trim();
+      }
+      if (bodyColor && (bodyColor.toLowerCase() === titleDescription.toLowerCase() || bodyColor.toLowerCase() === title.toLowerCase() || /^(gtb|ferrari|mazda|automatic|manual|petrol|diesel|4x2|4x4|\d+)$/i.test(bodyColor))) {
+        bodyColor = '';
+      }
+
+      // 9. Condition
+      let condition = nextDataProps.condition || nextDataProps.vehicleCondition || '';
+      if (!condition && jsonLdData.itemCondition) {
+        condition = jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '');
+      }
+      if (!condition) {
+        condition = getSelectorText(doc, ['[data-test="condition"]', '[data-testid="condition"]', '#spec-condition', '.spec-condition']);
+      }
+      if (!condition) {
+        for (const [k, v] of Object.entries(specTableMap)) {
+          if (/condition/i.test(k) && !/^(gtb|automatic|petrol|\d+)$/i.test(v)) {
+            condition = v;
+            break;
+          }
+        }
+      }
+      if (!condition) {
+        const condChip = summaryChips.find(c => /condition|used|new|demo|clean|excellent|good/i.test(c.trim()) && !/^(gtb|automatic|petrol|\d+)$/i.test(c.trim()));
+        if (condChip) condition = condChip.trim();
+      }
+      if (condition && (condition.toLowerCase() === titleDescription.toLowerCase() || /^(gtb|ferrari|mazda|\d+)$/i.test(condition))) {
+        condition = '';
+      }
+
+      // 10 & 16. Pricing & Pricing Summary
+      let rawPrice = nextDataProps.price || (jsonLdData.offers?.price ? String(jsonLdData.offers.price) : '') || '';
+      if (!rawPrice) {
+        rawPrice = getSelectorText(doc, ['[data-test="price"]', '[data-testid="price"]', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
+      }
+      if (!rawPrice) {
+        rawPrice = getMeta(['product:price:amount', 'og:price:amount']);
+      }
+
+      let priceDigits = String(rawPrice).replace(/[^\d]/g, '');
+      let formattedPrice = priceDigits ? Number(priceDigits).toLocaleString('fr-FR').replace(/\s/g, ' ') : '';
+
+      let installmentText = getSelectorText(doc, [
+        '[data-test="est-installment"]', '[data-testid="est-installment"]',
+        '[data-test="installment"]', '[data-testid="installment"]',
+        '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
+      ]);
+      if (!installmentText && nextDataProps.installment) {
+        installmentText = `Est. ${nextDataProps.installment}`;
+      }
+      if (!installmentText) {
+        const priceBlock = doc.querySelector('[class*="pricing"], [class*="price"], [class*="finance"]') || doc.body;
+        const match = (priceBlock.textContent || '').match(/(?:Est\.\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i);
+        if (match) {
+          installmentText = match[0].trim();
+          if (!installmentText.toLowerCase().startsWith('est.')) {
+            installmentText = `Est. ${installmentText}`;
+          }
+        }
+      }
+
+      let pricingSummary = nextDataProps.pricingSummary ||
+                           getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary', '[class*="pricing-summary"]']);
+
+      if (!pricingSummary && formattedPrice) {
+        if (installmentText) {
+          pricingSummary = `R ${formattedPrice} / ${installmentText}`;
+        } else {
+          pricingSummary = `R ${formattedPrice}`;
+        }
+      }
+
+      // 11, 12, 13. Dealer & Rating
+      const dealerContainer = findSectionContainer(['Seller Details', 'Dealer Details', 'Seller Information', 'Dealer Information', 'Dealership'], [
+        '[data-test="dealer-card"]', '[data-testid="dealer-card"]',
+        '[data-test="seller-info"]', '[data-testid="seller-info"]',
+        '.seller-info', '.dealer-info', '.dealer-card', 'aside[class*="dealer"]', 'div[class*="dealer"]'
+      ]);
+
+      let dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
+      if (!dealerName && dealerContainer) {
+        dealerName = getSelectorText(dealerContainer, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', 'a[href*="/dealers/"]', '.seller-info__title', '.dealer-title', 'h2', 'h3', 'h4', 'strong']);
+      }
+      if (!dealerName) {
+        dealerName = getSelectorText(doc, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '#dealer-name', 'a[href*="/dealers/"]', '.seller-info__title']);
+      }
+
+      let dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
+      if (!dealerAddress && dealerContainer) {
+        dealerAddress = getSelectorText(dealerContainer, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.seller-info__address', '.dealer-address', '.dealer-location', 'p', 'span']);
+      }
+      if (!dealerAddress) {
+        dealerAddress = getSelectorText(doc, ['[data-test="location"]', '[data-testid="location"]', '[data-test="dealer-address"]', '#car-location', '.location-text', '.vehicle-location']);
+      }
+
+      let averageRating = nextDataProps.dealer?.rating || nextDataProps.dealer?.aggregateRating || '';
       if (!averageRating && jsonLdData.offers?.seller?.aggregateRating) {
         const agg = jsonLdData.offers.seller.aggregateRating;
-        averageRating = `${agg.ratingValue}${agg.reviewCount ? ` (${agg.reviewCount} Reviews)` : ''}`;
+        const val = agg.ratingValue || '';
+        const count = agg.reviewCount || '';
+        if (val) averageRating = `${val}${count ? ` (${count} Reviews)` : ''}`;
+      }
+      if (!averageRating && dealerContainer) {
+        averageRating = getSelectorText(dealerContainer, ['[data-test="dealer-rating"]', '[data-testid="dealer-rating"]', '[data-test="rating"]', '.rating-badge', '.seller-rating', '.dealer-rating']);
+      }
+      if (!averageRating) {
+        averageRating = getSelectorText(doc, ['[data-test="dealer-rating"]', '[data-testid="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
+      }
+      if (!averageRating) {
+        const targetEl = dealerContainer || doc.body;
+        const match = (targetEl.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)/i);
+        if (match) {
+          averageRating = `${match[1]} (${match[2]} Reviews)`;
+        }
       }
 
       // 14. Features
-      let featuresList = nextDataProps.features ||
-                         getDOMList(['[data-test="features"] li', '[data-test="feature-item"]', '#car-features li', '.features-list li', '.equipment-list li', '[class*="feature"] li']);
+      let featuresList = nextDataProps.features || [];
+      if (typeof featuresList === 'string') {
+        featuresList = featuresList.split('\n').map(f => f.trim()).filter(Boolean);
+      }
 
-      if ((!featuresList || featuresList.length === 0)) {
-        const featureEls = doc.querySelectorAll('[data-test*="feature"], .feature-item, .equipment-item');
-        if (featureEls && featureEls.length > 0) {
-          featuresList = Array.from(featureEls).map(el => el.textContent.trim()).filter(Boolean);
+      if (!featuresList || featuresList.length === 0) {
+        const featuresContainer = findSectionContainer(['Features', 'Key Features', 'Vehicle Features', 'Standard Features', 'Optional Features', 'Equipment', 'Specification'], [
+          '[data-test="features"]', '[data-testid="features"]',
+          '#car-features', '.features-list', '.equipment-list', 'section[class*="features"]', 'div[class*="features"]'
+        ]);
+        if (featuresContainer) {
+          const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], p');
+          const items = [];
+          itemEls.forEach(el => {
+            const txt = (el.textContent || '').trim();
+            if (txt && txt.length > 1 && txt.length < 100 && !/^(features|key features|show more|view all|read more)$/i.test(txt)) {
+              if (!items.includes(txt)) items.push(txt);
+            }
+          });
+          if (items.length > 0) featuresList = items;
         }
       }
 
       // 15. Description
-      const description = nextDataProps.description ||
-                          jsonLdData.description ||
-                          getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description', '.description-text', '#description']) ||
-                          getMeta(['og:description', 'description']);
+      let description = nextDataProps.description || '';
+      if (!description) {
+        const descContainer = findSectionContainer(['Description', 'Seller Description', 'Dealer Description', 'Seller Comments', 'Dealer Comments', 'Vehicle Overview'], [
+          '[data-test="description"]', '[data-testid="description"]',
+          '#car-description', '.vehicle-description', '.description-text', 'section[class*="description"]', 'div[class*="description"]'
+        ]);
+        if (descContainer) {
+          const contentEl = descContainer.querySelector('p, [class*="content"], [class*="body"], [class*="text"]') || descContainer;
+          const txt = (contentEl.textContent || '').trim();
+          description = txt.replace(/^(?:Seller\s+|Dealer\s+)?Description\s*/i, '').replace(/Read\s*more\s*$/i, '').trim();
+        }
+      }
+      if (!description && jsonLdData.description && jsonLdData.description.length > 60) {
+        description = jsonLdData.description.trim();
+      }
+      if (!description) {
+        description = getMeta(['og:description', 'description']);
+      }
 
-      // 16. Price (Cash price numeric string)
-      const rawPrice = nextDataProps.price ||
-                       jsonLdData.offers?.price ||
-                       getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ||
-                       getMeta(['product:price:amount']);
-
-      // 17. Source URL (Canonical URL)
+      // 17. Source URL
       const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                         doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                         getMeta(['og:url']) ||
@@ -375,221 +605,256 @@
         averageRating,
         features: featuresList,
         description,
-        price: rawPrice,
+        price: formattedPrice || rawPrice,
         sourceUrl
       };
     }
   };
 
-  // --- 4. CLIPBOARD HELPERS ---
-  async function copyToClipboard(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return true;
-      } catch (e) {}
-    }
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    textarea.style.top = '-9999px';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    let success = false;
-    try {
-      success = document.execCommand('copy');
-    } catch (e) {}
-    document.body.removeChild(textarea);
-    return success;
-  }
+  // --- 4. FLOATING UI PANEL CONTROLLER (17 Fields with Individual COPY buttons) ---
+  const FIELD_DEFINITIONS = [
+    { key: 'title', label: 'Title' },
+    { key: 'titleDescription', label: 'Title Description' },
+    { key: 'year', label: 'Year' },
+    { key: 'kilometersDriven', label: 'Kilometers Driven' },
+    { key: 'transmission', label: 'Transmission' },
+    { key: 'fuel', label: 'Fuel' },
+    { key: 'drivetrain', label: '4x2 / 4x4' },
+    { key: 'bodyColor', label: 'Body Color' },
+    { key: 'condition', label: 'Condition' },
+    { key: 'pricingSummary', label: 'Pricing Summary' },
+    { key: 'dealerName', label: 'Dealer Name' },
+    { key: 'dealerAddress', label: 'Dealer Address' },
+    { key: 'averageRating', label: 'Average Rating' },
+    { key: 'features', label: 'Features (Newline-separated)' },
+    { key: 'description', label: 'Description' },
+    { key: 'price', label: 'Price' },
+    { key: 'sourceUrl', label: 'Source URL' }
+  ];
 
-  // --- 5. UI PANEL DISPATCHER ---
-  const FIELD_LABELS = {
-    title: 'Title',
-    titleDescription: 'Title Description',
-    year: 'Year',
-    kilometersDriven: 'Kilometers Driven',
-    transmission: 'Transmission',
-    fuel: 'Fuel',
-    drivetrain: '4x2 / 4x4',
-    bodyColor: 'Body Color',
-    condition: 'Condition',
-    pricingSummary: 'Pricing Summary',
-    dealerName: 'Dealer Name',
-    dealerAddress: 'Dealer Address',
-    averageRating: 'Average Rating',
-    features: 'Features',
-    description: 'Description',
-    price: 'Price',
-    sourceUrl: 'Source URL'
-  };
+  let currentExtractedData = {};
 
-  function performExtraction() {
-    const raw = CarsCoZaAdapter.extract(document);
+  function normalizeAndValidate(raw) {
+    const norm = Normalizers;
     const normalized = {
-      title: Normalizers.cleanText(raw.title),
-      titleDescription: Normalizers.cleanText(raw.titleDescription),
-      year: Normalizers.normalizeYear(raw.year),
-      kilometersDriven: Normalizers.normalizeKilometersDriven(raw.kilometersDriven),
-      transmission: Normalizers.normalizeTransmission(raw.transmission),
-      fuel: Normalizers.normalizeFuel(raw.fuel),
-      drivetrain: Normalizers.normalize4x2Or4x4(raw.drivetrain),
-      bodyColor: Normalizers.cleanText(raw.bodyColor),
-      condition: Normalizers.cleanText(raw.condition),
-      pricingSummary: Normalizers.cleanText(raw.pricingSummary),
-      dealerName: Normalizers.cleanText(raw.dealerName),
-      dealerAddress: Normalizers.cleanText(raw.dealerAddress),
-      averageRating: Normalizers.cleanText(raw.averageRating),
-      features: Normalizers.normalizeFeatures(raw.features),
-      description: Normalizers.cleanText(raw.description),
-      price: Normalizers.normalizePrice(raw.price),
-      sourceUrl: raw.sourceUrl || document.location.href
+      title: norm.cleanText(raw.title),
+      titleDescription: norm.cleanText(raw.titleDescription),
+      year: norm.normalizeYear(raw.year),
+      kilometersDriven: norm.normalizeKilometersDriven(raw.kilometersDriven),
+      transmission: norm.normalizeTransmission(raw.transmission),
+      fuel: norm.normalizeFuel(raw.fuel),
+      drivetrain: norm.normalize4x2Or4x4(raw.drivetrain),
+      bodyColor: norm.cleanText(raw.bodyColor),
+      condition: norm.cleanText(raw.condition),
+      pricingSummary: norm.cleanText(raw.pricingSummary),
+      dealerName: norm.cleanText(raw.dealerName),
+      dealerAddress: norm.cleanText(raw.dealerAddress),
+      averageRating: norm.cleanText(raw.averageRating),
+      features: norm.normalizeFeatures(raw.features),
+      description: norm.cleanText(raw.description),
+      price: norm.normalizePrice(raw.price),
+      sourceUrl: raw.sourceUrl || window.location.href
     };
-
-    const validationReport = Validators.validateAll(normalized);
-    renderExtractedFields(normalized, validationReport);
+    const validation = Validators.validateAll(normalized);
+    return { normalized, validation };
   }
 
-  function injectExtractorUI() {
-    if (document.getElementById('car-data-helper-widget')) return;
+  function copyToClipboard(text, btnElement) {
+    if (!text || text === 'Missing / Needs Review') {
+      alert('This field is missing or unextracted on this listing.');
+      return;
+    }
+    navigator.clipboard.writeText(text).then(() => {
+      const origText = btnElement.textContent;
+      btnElement.textContent = 'COPIED!';
+      btnElement.style.background = '#10b981';
+      btnElement.style.color = '#ffffff';
+      setTimeout(() => {
+        btnElement.textContent = origText;
+        btnElement.style.background = '#f1f5f9';
+        btnElement.style.color = '#0f172a';
+      }, 1400);
+    }).catch(err => {
+      console.error('Clipboard copy failed:', err);
+    });
+  }
 
-    const widget = document.createElement('div');
-    widget.id = 'car-data-helper-widget';
-    widget.style.cssText = `
+  function createHelperPanel() {
+    if (document.getElementById('car-data-helper-panel')) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'car-data-helper-panel';
+    panel.style.cssText = `
       position: fixed;
-      bottom: 16px;
+      top: 16px;
       right: 16px;
-      z-index: 999999;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0f172a;
-      color: #f8fafc;
-      border: 2px solid #3b82f6;
+      width: 440px;
+      max-height: calc(100vh - 32px);
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
       border-radius: 12px;
-      padding: 14px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
-      width: 360px;
-      max-width: 92vw;
-      max-height: 85vh;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      z-index: 9999999;
       display: flex;
       flex-direction: column;
-      box-sizing: border-box;
+      overflow: hidden;
     `;
 
-    widget.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <div style="font-weight:700; color:#60a5fa; font-size:1rem; display:flex; align-items:center; gap:6px;">
-          <span>🚗 Car Data Helper (v2.0.2)</span>
+    panel.innerHTML = `
+      <div id="car-panel-header" style="background:#0f172a; color:#f8fafc; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; cursor:move; user-select:none;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:16px;">🚗</span>
+          <div>
+            <strong style="font-size:13px; letter-spacing:0.3px;">Car Data Entry Helper</strong>
+            <span style="font-size:10px; background:#3b82f6; color:#ffffff; padding:2px 6px; border-radius:10px; margin-left:6px; font-weight:700;">v2.0.3</span>
+          </div>
         </div>
-        <button id="cdh-toggle-btn" style="background:transparent; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer; padding:2px 6px;">−</button>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button id="car-panel-reextract" title="Re-extract live data" style="background:#334155; color:#f8fafc; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-weight:600;">🔄 Re-extract</button>
+          <button id="car-panel-toggle" title="Minimize / Expand" style="background:transparent; color:#94a3b8; border:none; font-size:14px; cursor:pointer; padding:2px 6px;">➖</button>
+        </div>
       </div>
-      
-      <div id="cdh-body" style="display:flex; flex-direction:column; gap:10px; overflow:hidden;">
-        <button id="cdh-btn-extract" style="width:100%; background:#10b981; color:#fff; border:none; padding:12px; border-radius:8px; font-weight:700; font-size:0.95rem; cursor:pointer; min-height:44px;">
-          🔄 Re-extract Data
+
+      <div id="car-panel-summary-bar" style="background:#f8fafc; border-bottom:1px solid #e2e8f0; padding:8px 16px; font-size:11px; color:#64748b; display:flex; justify-content:space-between; align-items:center;">
+        <span id="car-extracted-count">Extracting fields...</span>
+        <span style="font-size:10px; color:#94a3b8;">Manual 1-Click Copy</span>
+      </div>
+
+      <div id="car-panel-body" style="padding:10px 14px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px;">
+        <!-- Fields will be dynamically injected -->
+      </div>
+
+      <div id="car-panel-footer" style="background:#f8fafc; border-top:1px solid #e2e8f0; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;">
+        <button id="car-panel-copy-all" style="background:#2563eb; color:#ffffff; border:none; padding:6px 12px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; width:100%;">
+          📋 Copy All Extracted (JSON)
         </button>
-
-        <div id="cdh-results-container" style="display:block; overflow-y:auto; max-height:60vh; padding-right:4px;">
-          <div id="cdh-fields-list" style="display:flex; flex-direction:column; gap:10px;"></div>
-        </div>
       </div>
     `;
 
-    document.body.appendChild(widget);
+    document.body.appendChild(panel);
 
-    let isMinimized = false;
-    document.getElementById('cdh-toggle-btn').addEventListener('click', () => {
-      const body = document.getElementById('cdh-body');
-      isMinimized = !isMinimized;
-      body.style.display = isMinimized ? 'none' : 'flex';
-      document.getElementById('cdh-toggle-btn').textContent = isMinimized ? '+' : '−';
-    });
+    // Event listeners
+    panel.querySelector('#car-panel-reextract').onclick = () => runExtraction();
+    panel.querySelector('#car-panel-toggle').onclick = () => {
+      const body = panel.querySelector('#car-panel-body');
+      const footer = panel.querySelector('#car-panel-footer');
+      const sumBar = panel.querySelector('#car-panel-summary-bar');
+      const btn = panel.querySelector('#car-panel-toggle');
+      if (body.style.display === 'none') {
+        body.style.display = 'flex';
+        footer.style.display = 'flex';
+        sumBar.style.display = 'flex';
+        btn.textContent = '➖';
+      } else {
+        body.style.display = 'none';
+        footer.style.display = 'none';
+        sumBar.style.display = 'none';
+        btn.textContent = '➕';
+      }
+    };
 
-    document.getElementById('cdh-btn-extract').addEventListener('click', () => {
-      performExtraction();
-    });
+    panel.querySelector('#car-panel-copy-all').onclick = (e) => {
+      const jsonStr = JSON.stringify(currentExtractedData, null, 2);
+      copyToClipboard(jsonStr, e.target);
+    };
 
-    performExtraction();
+    runExtraction();
   }
 
-  function renderExtractedFields(data, report) {
-    const fieldsList = document.getElementById('cdh-fields-list');
-    if (!fieldsList) return;
-    fieldsList.innerHTML = '';
+  function runExtraction() {
+    const bodyEl = document.getElementById('car-panel-body');
+    const countEl = document.getElementById('car-extracted-count');
+    if (!bodyEl) return;
 
-    for (const key of Object.keys(FIELD_LABELS)) {
-      const label = FIELD_LABELS[key];
-      const val = data[key];
-      const status = report[key]?.status;
-      const isMissing = !val || status === 'missing';
+    bodyEl.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">Extracting live page specifications...</div>';
 
-      const fieldCard = document.createElement('div');
-      fieldCard.style.cssText = `
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      `;
+    setTimeout(() => {
+      const raw = CarsCoZaAdapter.extract(document);
+      const { normalized, validation } = normalizeAndValidate(raw);
+      currentExtractedData = normalized;
 
-      const displayVal = isMissing ? 'Missing / Needs Review' : val;
-      const displayValColor = isMissing ? '#f87171' : '#f1f5f9';
-      const isMultiline = String(val).includes('\n') || key === 'description' || key === 'features';
+      let extractedCount = 0;
+      bodyEl.innerHTML = '';
 
-      fieldCard.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:0.75rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">${label}</span>
-          <button class="cdh-copy-btn" data-key="${key}" style="background:#3b82f6; color:#ffffff; border:none; border-radius:6px; padding:6px 12px; font-weight:700; font-size:0.78rem; cursor:pointer; min-height:36px;">
-            COPY
-          </button>
-        </div>
-        <div style="font-size:0.85rem; color:${displayValColor}; white-space:${isMultiline ? 'pre-wrap' : 'normal'}; word-break:break-word; max-height:${isMultiline ? '120px' : 'none'}; overflow-y:${isMultiline ? 'auto' : 'visible'}; background:#0f172a; padding:6px 8px; border-radius:4px; border:1px solid #1e293b;">
-          ${escapeHtml(displayVal)}
-        </div>
-      `;
+      FIELD_DEFINITIONS.forEach(({ key, label }) => {
+        const val = normalized[key];
+        const statusObj = validation[key];
+        const isExtracted = statusObj.status === 'extracted';
+        if (isExtracted) extractedCount++;
 
-      fieldsList.appendChild(fieldCard);
+        const row = document.createElement('div');
+        row.style.cssText = `
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 6px;
+          padding: 6px 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          transition: all 0.15s ease;
+        `;
 
-      const copyBtn = fieldCard.querySelector('.cdh-copy-btn');
-      copyBtn.addEventListener('click', async () => {
-        const textToCopy = isMissing ? '' : String(val);
-        const copied = await copyToClipboard(textToCopy);
-        if (copied) {
-          copyBtn.textContent = '✓ Copied';
-          copyBtn.style.background = '#10b981';
-          setTimeout(() => {
-            copyBtn.textContent = 'COPY';
-            copyBtn.style.background = '#3b82f6';
-          }, 2000);
+        const leftCol = document.createElement('div');
+        leftCol.style.cssText = 'flex:1; min-width:0;';
+
+        const labelEl = document.createElement('div');
+        labelEl.style.cssText = 'font-size:10.5px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;';
+        labelEl.textContent = label;
+
+        const valEl = document.createElement('div');
+        valEl.style.cssText = 'font-size:12.5px; font-weight:600; margin-top:2px; word-break:break-word; white-space:pre-wrap; max-height:80px; overflow-y:auto;';
+
+        if (isExtracted) {
+          valEl.style.color = '#0f172a';
+          valEl.textContent = val;
         } else {
-          copyBtn.textContent = 'Failed';
-          copyBtn.style.background = '#ef4444';
-          setTimeout(() => {
-            copyBtn.textContent = 'COPY';
-            copyBtn.style.background = '#3b82f6';
-          }, 2000);
+          valEl.style.color = '#dc2626';
+          valEl.innerHTML = `<span style="background:#fee2e2; color:#b91c1c; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">Missing / Needs Review</span>`;
         }
+
+        leftCol.appendChild(labelEl);
+        leftCol.appendChild(valEl);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.style.cssText = `
+          background: #f1f5f9;
+          color: #0f172a;
+          border: 1px solid #cbd5e1;
+          padding: 5px 10px;
+          border-radius: 5px;
+          font-weight: 700;
+          font-size: 11px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: all 0.15s ease;
+        `;
+        copyBtn.textContent = 'COPY';
+        copyBtn.title = `Copy ${label}`;
+        copyBtn.onclick = () => copyToClipboard(val, copyBtn);
+
+        row.appendChild(leftCol);
+        row.appendChild(copyBtn);
+        bodyEl.appendChild(row);
       });
-    }
+
+      if (countEl) {
+        countEl.textContent = `Extracted ${extractedCount} of 17 fields`;
+        countEl.style.color = extractedCount >= 14 ? '#16a34a' : (extractedCount >= 8 ? '#d97706' : '#dc2626');
+        countEl.style.fontWeight = '700';
+      }
+    }, 100);
   }
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    injectExtractorUI();
+  // Auto-initialize on DOM ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(createHelperPanel, 300);
+    });
   } else {
-    window.addEventListener('DOMContentLoaded', injectExtractorUI);
+    setTimeout(createHelperPanel, 300);
   }
 })();

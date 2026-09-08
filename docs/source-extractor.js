@@ -1,13 +1,13 @@
 /**
- * Production Cars.co.za Dynamic Source Extractor Engine v2.0.2
- * Multi-Strategy Cascading Extractor for ANY Cars.co.za car-detail / listing page.
+ * Production Cars.co.za Dynamic Source Extractor Engine v2.0.3
+ * Field-Specific Multi-Strategy Cascading Extractor for ANY Cars.co.za listing page.
  *
- * Cascading Strategies:
- * 1. Deep Next.js Hydration Props Search (<script id="__NEXT_DATA__">)
- * 2. Schema.org JSON-LD Microdata (<script type="application/ld+json">)
- * 3. OpenGraph / Canonical Meta Tags
- * 4. Explicit Data Attributes & Semantic DOM Selectors
- * 5. Universal Label-Value Spec Crawler (Grid, Flexbox, Cards, Tables, Lists, DL/DT/DD)
+ * Ordered Strategies:
+ * A. Exact production-page selectors/data attributes discovered from live DOM
+ * B. Structured page state / Next.js JSON data (<script id="__NEXT_DATA__">)
+ * C. Schema.org JSON-LD Microdata (<script type="application/ld+json">)
+ * D. Narrow Section-Scoped DOM Extractors (Title, Chips, Pricing, Dealer, Features, Description)
+ * E. Missing / Needs Review (Never cross-contaminate fields)
  */
 
 const CarsCoZaAdapter = {
@@ -17,7 +17,7 @@ const CarsCoZaAdapter = {
   canHandle(doc) {
     if (!doc) return false;
     const url = doc.location?.href || '';
-    return url.includes('cars.co.za') || doc.querySelector('#cars-co-za-marker') !== null || doc.title.includes('Cars.co.za');
+    return url.includes('cars.co.za') || doc.querySelector('#cars-co-za-marker') !== null || (doc.title && doc.title.includes('Cars.co.za'));
   },
 
   extract(doc) {
@@ -67,27 +67,19 @@ const CarsCoZaAdapter = {
       });
     } catch (e) {}
 
-    // --- Helper 2: DOM Selectors Lookup ---
-    const getDOMText = (selectors) => {
+    // --- Scoped DOM Lookup Helpers ---
+    const getSelectorText = (root, selectors) => {
+      if (!root) return '';
       for (const sel of selectors) {
-        const el = doc.querySelector(sel);
-        if (el) {
-          const txt = el.textContent || el.getAttribute('content') || el.value;
-          if (txt && txt.trim().length > 0) return txt.trim();
-        }
+        try {
+          const el = root.querySelector(sel);
+          if (el) {
+            const txt = el.textContent || el.getAttribute('content') || el.value || '';
+            if (txt && txt.trim().length > 0) return txt.trim();
+          }
+        } catch (e) {}
       }
       return '';
-    };
-
-    const getDOMList = (selectors) => {
-      for (const sel of selectors) {
-        const elements = doc.querySelectorAll(sel);
-        if (elements && elements.length > 0) {
-          const list = Array.from(elements).map(el => el.textContent.trim()).filter(Boolean);
-          if (list.length > 0) return list;
-        }
-      }
-      return [];
     };
 
     const getMeta = (props) => {
@@ -98,175 +90,411 @@ const CarsCoZaAdapter = {
       return '';
     };
 
-    // --- Helper 3: Universal Label Spec Crawler ---
-    const crawlSpecByLabel = (labels) => {
-      const candidateElements = doc.querySelectorAll('div, span, p, tr, li, dl, dt, [class*="spec"], [class*="detail"], [data-test]');
-      for (const el of candidateElements) {
-        const txt = el.textContent || '';
-        if (!txt) continue;
-
-        for (const lbl of labels) {
-          const lblLower = lbl.toLowerCase();
-          const labelSpan = Array.from(el.children).find(child => child.textContent && child.textContent.trim().toLowerCase() === lblLower);
-          if (labelSpan) {
-            const valueSpan = Array.from(el.children).find(child => child !== labelSpan && child.textContent && child.textContent.trim().length > 0);
-            if (valueSpan) return valueSpan.textContent.trim();
-          }
-
-          if (txt.toLowerCase().includes(lblLower)) {
-            const valEl = el.querySelector('.value, td:nth-child(2), dd, span:last-child, p:last-child');
-            if (valEl && valEl !== el && valEl.textContent && valEl.textContent.trim().toLowerCase() !== lblLower) {
-              return valEl.textContent.trim();
-            }
-            const parts = txt.split(/[:\n\t]/);
-            if (parts.length > 1 && parts[0].toLowerCase().includes(lblLower)) {
-              return parts[parts.length - 1].trim();
-            }
+    const findSectionContainer = (headings, explicitSelectors = []) => {
+      for (const sel of explicitSelectors) {
+        try {
+          const el = doc.querySelector(sel);
+          if (el) return el;
+        } catch (e) {}
+      }
+      const headingElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b');
+      for (const h of headingElements) {
+        const text = (h.textContent || '').trim().toLowerCase();
+        for (const target of headings) {
+          if (text === target.toLowerCase() || (text.includes(target.toLowerCase()) && text.length < target.length + 15)) {
+            return h.closest('section, article, div[class*="section"], div[class*="card"], div[class*="container"], div[class*="block"]') || h.parentElement;
           }
         }
       }
-      return '';
+      return null;
     };
 
-    // --- FIELD EXTRACTIONS ---
+    // --- 1 & 2. TITLE & TITLE DESCRIPTION ---
+    const h1El = doc.querySelector('[data-test="heading"], [data-testid="heading"], [data-test="title"], [data-testid="title"], h1.heading-sm, h1.title, h1');
+    let rawHeadingText = h1El ? (h1El.textContent || '').trim() : '';
+    if (!rawHeadingText) {
+      rawHeadingText = nextDataProps.title || nextDataProps.heading || (typeof jsonLdData.name === 'string' ? jsonLdData.name : '') || getMeta(['og:title', 'title']);
+    }
+    rawHeadingText = rawHeadingText.replace(/\s+for\s+sale.*$/i, '').replace(/\s*-\s*R\s*[\d\s,.]+.*$/i, '').trim();
 
-    const rawHeadingText = getDOMText(['[data-test="heading"]', '[data-test="title"]', '.vehicle-title', 'h1.heading-sm', 'h1.title', 'h1']) ||
-                           nextDataProps.title ||
-                           jsonLdData.name ||
-                           getMeta(['og:title', 'title']);
+    // Look for explicit variant/subtitle element
+    let rawVariantText = getSelectorText(doc, [
+      '[data-test="variant"]', '[data-testid="variant"]',
+      '[data-test="subtitle"]', '[data-testid="subtitle"]',
+      '[data-test="derivative"]', '[data-testid="derivative"]',
+      '[data-test="sub-heading"]', '[data-testid="sub-heading"]',
+      '[data-test="trim"]', '[data-testid="trim"]',
+      '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading', '.subHeading', '.derivative', '.trim'
+    ]);
 
-    const rawVariantText = getDOMText(['[data-test="variant"]', '[data-test="subtitle"]', '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading']) ||
-                           nextDataProps.variant ||
-                           nextDataProps.trim ||
-                           jsonLdData.model || '';
+    // Check sibling of h1 if not found
+    if (!rawVariantText && h1El && h1El.nextElementSibling) {
+      const sib = h1El.nextElementSibling;
+      const sibTxt = (sib.textContent || '').trim();
+      if (sibTxt && sibTxt.length > 0 && sibTxt.length < 60 && !sibTxt.startsWith('R') && !/\b(reviews|gauteng|cape town|western cape|kwazulu|sandton|durban|johannesburg)\b/i.test(sibTxt)) {
+        rawVariantText = sibTxt;
+      }
+    }
+
+    if (!rawVariantText) {
+      rawVariantText = nextDataProps.variant || nextDataProps.derivative || nextDataProps.trim || nextDataProps.subTitle || nextDataProps.subtitle || '';
+    }
 
     let title = '';
     let titleDescription = '';
 
-    const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
-    const modelName = nextDataProps.model || jsonLdData.model || '';
-    const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (rawHeadingText.match(/\b(19\d\d|20\d\d)\b/) ? rawHeadingText.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
-
-    if (rawVariantText) {
+    if (rawVariantText && rawVariantText.toLowerCase() !== rawHeadingText.toLowerCase()) {
       titleDescription = rawVariantText.trim();
-      if (rawHeadingText.includes(rawVariantText)) {
-        title = rawHeadingText.replace(rawVariantText, '').trim();
+      if (rawHeadingText.toLowerCase().endsWith(rawVariantText.toLowerCase())) {
+        title = rawHeadingText.substring(0, rawHeadingText.length - rawVariantText.length).trim();
+      } else if (rawHeadingText.toLowerCase().includes(rawVariantText.toLowerCase())) {
+        title = rawHeadingText.replace(new RegExp(rawVariantText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').trim();
       } else {
         title = rawHeadingText.trim();
       }
-    } else if (brandName && modelName) {
-      title = `${yearVal} ${brandName} ${modelName}`.trim();
-      titleDescription = rawHeadingText.replace(title, '').trim();
     } else {
-      const m = rawHeadingText.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
-      if (m && m[2].trim()) {
-        title = m[1].trim();
-        titleDescription = m[2].trim();
+      const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
+      const modelName = nextDataProps.model || jsonLdData.model || '';
+      const yearMatch = rawHeadingText.match(/\b(19\d\d|20\d\d)\b/);
+      const yrVal = nextDataProps.year || (yearMatch ? yearMatch[1] : '');
+
+      if (brandName && modelName) {
+        const expectedBase = `${yrVal ? yrVal + ' ' : ''}${brandName} ${modelName}`.trim();
+        if (rawHeadingText.toLowerCase().startsWith(expectedBase.toLowerCase()) && rawHeadingText.length > expectedBase.length) {
+          title = expectedBase;
+          titleDescription = rawHeadingText.substring(expectedBase.length).trim();
+        } else {
+          title = rawHeadingText;
+          titleDescription = '';
+        }
       } else {
-        title = rawHeadingText;
-        titleDescription = '';
+        const m = rawHeadingText.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)\s+(.+)$/);
+        if (m && m[2] && m[2].trim()) {
+          title = m[1].trim();
+          titleDescription = m[2].trim();
+        } else {
+          title = rawHeadingText;
+          titleDescription = '';
+        }
       }
     }
 
-    // 3. Year
-    const year = yearVal ||
-                 crawlSpecByLabel(['Year', 'Registration Year', 'Model Year']) ||
-                 getDOMText(['[data-test="year"]', '#spec-year']);
+    if (titleDescription && titleDescription.toLowerCase() === title.toLowerCase()) {
+      titleDescription = '';
+    }
 
-    // 4. Kilometers Driven
-    const kilometersDriven = nextDataProps.mileage ||
-                             jsonLdData.mileageFromOdometer?.value ||
-                             jsonLdData.mileageFromOdometer ||
-                             getDOMText(['[data-test="mileage"]', '[data-test="kilometers"]', '#spec-mileage', '.spec-mileage']) ||
-                             crawlSpecByLabel(['Kilometers Driven', 'Kilometers', 'Mileage', 'Odometer', 'Km']);
+    // --- SCOPED SPECIFICATION HARVESTING (Zero cross-field contamination) ---
+    // 1. Scoped key-value pairs from tables / DLs / spec cards
+    const specTableMap = {};
+    const specRows = doc.querySelectorAll('table tr, dl > div, dl tr, [class*="spec-item"], [class*="detail-item"], [class*="spec-row"]');
+    specRows.forEach(row => {
+      const labelEl = row.querySelector('td:first-child, th, dt, [class*="label"], [class*="name"]');
+      const valEl = row.querySelector('td:last-child, dd, [class*="value"]');
+      if (labelEl && valEl && labelEl !== valEl) {
+        const l = labelEl.textContent.trim().toLowerCase();
+        const v = valEl.textContent.trim();
+        if (l && v) specTableMap[l] = v;
+      }
+    });
 
-    // 5. Transmission
-    const transmission = nextDataProps.transmission ||
-                         jsonLdData.vehicleTransmission ||
-                         getDOMText(['[data-test="transmission"]', '#spec-transmission']) ||
-                         crawlSpecByLabel(['Transmission', 'Gearbox']);
+    // 2. Scoped summary chips from summary cards / quick specs
+    const summaryChips = [];
+    const chipContainers = doc.querySelectorAll('[data-test*="spec"], [data-testid*="spec"], [class*="quick-specs"], [class*="key-specs"], [class*="vehicle-specs"], [class*="overview"], [class*="chips"], [class*="summary-grid"], [class*="attributes"]');
+    chipContainers.forEach(container => {
+      const items = container.querySelectorAll('li, div[class*="chip"], div[class*="pill"], div[class*="item"], div[class*="spec"], span[class*="chip"], span[class*="item"], p');
+      items.forEach(it => {
+        const txt = (it.textContent || '').trim();
+        if (txt && txt.length > 0 && txt.length < 40 && !summaryChips.includes(txt)) {
+          summaryChips.push(txt);
+        }
+      });
+    });
 
-    // 6. Fuel
-    const fuel = nextDataProps.fuel ||
-                 jsonLdData.fuelType ||
-                 getDOMText(['[data-test="fuel"]', '[data-test="fuel-type"]', '#spec-fuel']) ||
-                 crawlSpecByLabel(['Fuel Type', 'Fuel']);
+    // --- 3. YEAR ---
+    let year = nextDataProps.year || jsonLdData.vehicleModelDate || '';
+    if (!year) {
+      year = getSelectorText(doc, ['[data-test="year"]', '[data-testid="year"]', '#spec-year']);
+    }
+    if (!year) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/year|model year|registration/i.test(k) && /^(19\d\d|20\d\d)$/.test(v)) {
+          year = v;
+          break;
+        }
+      }
+    }
+    if (!year) {
+      const yrChip = summaryChips.find(c => /^(19\d\d|20\d\d)$/.test(c.trim()));
+      if (yrChip) year = yrChip.trim();
+    }
+    if (!year) {
+      const match = rawHeadingText.match(/\b(19\d\d|20\d\d)\b/);
+      if (match) year = match[1];
+    }
 
-    // 7. 4x2 / 4x4 (Drivetrain)
-    const drivetrain = nextDataProps.drivetrain ||
-                       jsonLdData.driveWheelConfiguration ||
-                       getDOMText(['[data-test="drivetrain"]', '#spec-drivetrain']) ||
-                       crawlSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type', 'Wheel Drive']);
+    // --- 4. KILOMETERS DRIVEN ---
+    let kilometersDriven = nextDataProps.mileage || jsonLdData.mileageFromOdometer?.value || (typeof jsonLdData.mileageFromOdometer === 'string' ? jsonLdData.mileageFromOdometer : '') || '';
+    if (!kilometersDriven) {
+      kilometersDriven = getSelectorText(doc, ['[data-test="mileage"]', '[data-testid="mileage"]', '[data-test="kilometers"]', '[data-testid="kilometers"]', '#spec-mileage', '.spec-mileage', '[data-test*="odometer"]']);
+    }
+    if (!kilometersDriven) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/mileage|kilometer|odometer|km/i.test(k) && /\d/.test(v)) {
+          kilometersDriven = v;
+          break;
+        }
+      }
+    }
+    if (!kilometersDriven) {
+      const kmChip = summaryChips.find(c => /\b\d[\d\s,.]*\s*(?:km|kms|kilometres|kilometers)\b/i.test(c));
+      if (kmChip) kilometersDriven = kmChip.trim();
+    }
+    if (kilometersDriven && (!/\d/.test(kilometersDriven) || /^(gtb|automatic|manual|petrol|diesel|red|white|blue|4x2|4x4)$/i.test(kilometersDriven))) {
+      kilometersDriven = '';
+    }
 
-    // 8. Body Color
-    const bodyColor = nextDataProps.colour ||
-                      nextDataProps.color ||
-                      jsonLdData.color ||
-                      getDOMText(['[data-test="colour"]', '[data-test="color"]', '#spec-colour']) ||
-                      crawlSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']);
+    // --- 5. TRANSMISSION ---
+    let transmission = nextDataProps.transmission || nextDataProps.gearbox || jsonLdData.vehicleTransmission || '';
+    if (!transmission) {
+      transmission = getSelectorText(doc, ['[data-test="transmission"]', '[data-testid="transmission"]', '[data-test="gearbox"]', '#spec-transmission', '.spec-transmission']);
+    }
+    if (!transmission) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/transmission|gearbox/i.test(k) && /automatic|manual|semi|cvt|dual clutch/i.test(v)) {
+          transmission = v;
+          break;
+        }
+      }
+    }
+    if (!transmission) {
+      const transChip = summaryChips.find(c => /^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(c.trim()));
+      if (transChip) transmission = transChip.trim();
+    }
+    if (transmission && !/^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(transmission.trim())) {
+      transmission = '';
+    }
 
-    // 9. Condition
-    const condition = nextDataProps.condition ||
-                      (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') ||
-                      getDOMText(['[data-test="condition"]', '#spec-condition']) ||
-                      crawlSpecByLabel(['Condition', 'Vehicle Condition']);
+    // --- 6. FUEL ---
+    let fuel = nextDataProps.fuel || nextDataProps.fuelType || nextDataProps.fuel_type || jsonLdData.fuelType || '';
+    if (!fuel) {
+      fuel = getSelectorText(doc, ['[data-test="fuel"]', '[data-testid="fuel"]', '[data-test="fuel-type"]', '#spec-fuel', '.spec-fuel']);
+    }
+    if (!fuel) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/fuel/i.test(k) && /petrol|diesel|hybrid|electric|phev|gas|lpg/i.test(v)) {
+          fuel = v;
+          break;
+        }
+      }
+    }
+    if (!fuel) {
+      const fuelChip = summaryChips.find(c => /^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(c.trim()));
+      if (fuelChip) fuel = fuelChip.trim();
+    }
+    if (fuel && !/^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(fuel.trim())) {
+      fuel = '';
+    }
 
-    // 10. Pricing Summary (Price + Installment text)
-    const cashPriceText = getDOMText(['[data-test="price"]', '.price-amount', '#car-price', '.heading-lg.price']) ||
-                          (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
+    // --- 7. 4x2 / 4x4 (DRIVETRAIN) ---
+    let drivetrain = nextDataProps.drivetrain || nextDataProps.drive || nextDataProps.driveType || nextDataProps.driveWheelConfiguration || jsonLdData.driveWheelConfiguration || '';
+    if (!drivetrain) {
+      drivetrain = getSelectorText(doc, ['[data-test="drivetrain"]', '[data-testid="drivetrain"]', '[data-test="drive"]', '#spec-drivetrain', '.spec-drivetrain']);
+    }
+    if (!drivetrain) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/4x2|4x4|drivetrain|drive\s*type|driven\s*wheels|wheel\s*drive/i.test(k)) {
+          drivetrain = v;
+          break;
+        }
+      }
+    }
+    if (!drivetrain) {
+      const dtChip = summaryChips.find(c => /^(4x2|4x4|fwd|rwd|awd|4wd|front-wheel drive|rear-wheel drive|all-wheel drive|four-wheel drive)$/i.test(c.trim()));
+      if (dtChip) drivetrain = dtChip.trim();
+    }
+    if (drivetrain) {
+      if (/4x4|awd|4wd|all-wheel|four-wheel/i.test(drivetrain)) drivetrain = '4x4';
+      else if (/4x2|fwd|rwd|front-wheel|rear-wheel|front wheel|rear wheel/i.test(drivetrain)) drivetrain = '4x2';
+      else drivetrain = '';
+    }
 
-    const installmentText = getDOMText(['[data-test="est-installment"]', '[data-test="installment"]', '.est-payment', '.finance-est']) ||
-                            (nextDataProps.installment ? `Est. ${nextDataProps.installment}` : '');
+    // --- 8. BODY COLOR ---
+    let bodyColor = nextDataProps.colour || nextDataProps.color || nextDataProps.bodyColour || nextDataProps.bodyColor || nextDataProps.exteriorColor || jsonLdData.color || '';
+    if (!bodyColor) {
+      bodyColor = getSelectorText(doc, ['[data-test="colour"]', '[data-testid="colour"]', '[data-test="color"]', '[data-testid="color"]', '#spec-colour', '.spec-colour']);
+    }
+    if (!bodyColor) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/colou?r|body\s*colou?r/i.test(k) && !/^(gtb|automatic|petrol|4x2|4x4|\d+)$/i.test(v)) {
+          bodyColor = v;
+          break;
+        }
+      }
+    }
+    if (!bodyColor) {
+      const knownColors = ['red', 'white', 'black', 'silver', 'grey', 'gray', 'blue', 'yellow', 'green', 'orange', 'brown', 'bronze', 'gold', 'purple', 'beige', 'maroon', 'burgundy', 'charcoal', 'navy', 'rosso corsa', 'bianco', 'nero', 'giallo'];
+      const colorChip = summaryChips.find(c => knownColors.includes(c.trim().toLowerCase()));
+      if (colorChip) bodyColor = colorChip.trim();
+    }
+    if (bodyColor && (bodyColor.toLowerCase() === titleDescription.toLowerCase() || bodyColor.toLowerCase() === title.toLowerCase() || /^(gtb|ferrari|mazda|automatic|manual|petrol|diesel|4x2|4x4|\d+)$/i.test(bodyColor))) {
+      bodyColor = '';
+    }
+
+    // --- 9. CONDITION ---
+    let condition = nextDataProps.condition || nextDataProps.vehicleCondition || '';
+    if (!condition && jsonLdData.itemCondition) {
+      condition = jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '');
+    }
+    if (!condition) {
+      condition = getSelectorText(doc, ['[data-test="condition"]', '[data-testid="condition"]', '#spec-condition', '.spec-condition']);
+    }
+    if (!condition) {
+      for (const [k, v] of Object.entries(specTableMap)) {
+        if (/condition/i.test(k) && !/^(gtb|automatic|petrol|\d+)$/i.test(v)) {
+          condition = v;
+          break;
+        }
+      }
+    }
+    if (!condition) {
+      const condChip = summaryChips.find(c => /condition|used|new|demo|clean|excellent|good/i.test(c.trim()) && !/^(gtb|automatic|petrol|\d+)$/i.test(c.trim()));
+      if (condChip) condition = condChip.trim();
+    }
+    if (condition && (condition.toLowerCase() === titleDescription.toLowerCase() || /^(gtb|ferrari|mazda|\d+)$/i.test(condition))) {
+      condition = '';
+    }
+
+    // --- 10 & 16. PRICING & PRICING SUMMARY ---
+    let rawPrice = nextDataProps.price || (jsonLdData.offers?.price ? String(jsonLdData.offers.price) : '') || '';
+    if (!rawPrice) {
+      rawPrice = getSelectorText(doc, ['[data-test="price"]', '[data-testid="price"]', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
+    }
+    if (!rawPrice) {
+      rawPrice = getMeta(['product:price:amount', 'og:price:amount']);
+    }
+
+    let priceDigits = String(rawPrice).replace(/[^\d]/g, '');
+    let formattedPrice = priceDigits ? Number(priceDigits).toLocaleString('fr-FR').replace(/\s/g, ' ') : '';
+
+    let installmentText = getSelectorText(doc, [
+      '[data-test="est-installment"]', '[data-testid="est-installment"]',
+      '[data-test="installment"]', '[data-testid="installment"]',
+      '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
+    ]);
+    if (!installmentText && nextDataProps.installment) {
+      installmentText = `Est. ${nextDataProps.installment}`;
+    }
+    if (!installmentText) {
+      const priceBlock = doc.querySelector('[class*="pricing"], [class*="price"], [class*="finance"]') || doc.body;
+      const match = (priceBlock.textContent || '').match(/(?:Est\.\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i);
+      if (match) {
+        installmentText = match[0].trim();
+        if (!installmentText.toLowerCase().startsWith('est.')) {
+          installmentText = `Est. ${installmentText}`;
+        }
+      }
+    }
 
     let pricingSummary = nextDataProps.pricingSummary ||
-                         getDOMText(['[data-test="pricing-summary"]', '#car-price-summary', '.price-summary']);
+                         getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary', '[class*="pricing-summary"]']);
 
-    if (!pricingSummary && cashPriceText) {
-      pricingSummary = installmentText ? `${cashPriceText} / ${installmentText}` : cashPriceText;
-    }
-
-    // 11. Dealer Name
-    const dealerName = nextDataProps.dealer?.name ||
-                       jsonLdData.offers?.seller?.name ||
-                       getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title', '.dealer-title', 'a[href*="/dealers/"]']);
-
-    // 12. Dealer Address / Location
-    const dealerAddress = nextDataProps.dealer?.address ||
-                          nextDataProps.location ||
-                          getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text', '.dealer-location']);
-
-    // 13. Average Rating
-    let averageRating = nextDataProps.dealer?.rating || getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
-
-    if (!averageRating && jsonLdData.offers?.seller?.aggregateRating) {
-      const agg = jsonLdData.offers.seller.aggregateRating;
-      averageRating = `${agg.ratingValue}${agg.reviewCount ? ` (${agg.reviewCount} Reviews)` : ''}`;
-    }
-
-    // 14. Features
-    let featuresList = nextDataProps.features ||
-                       getDOMList(['[data-test="features"] li', '[data-test="feature-item"]', '#car-features li', '.features-list li', '.equipment-list li', '[class*="feature"] li']);
-
-    if ((!featuresList || featuresList.length === 0)) {
-      const featureEls = doc.querySelectorAll('[data-test*="feature"], .feature-item, .equipment-item');
-      if (featureEls && featureEls.length > 0) {
-        featuresList = Array.from(featureEls).map(el => el.textContent.trim()).filter(Boolean);
+    if (!pricingSummary && formattedPrice) {
+      if (installmentText) {
+        pricingSummary = `R ${formattedPrice} / ${installmentText}`;
+      } else {
+        pricingSummary = `R ${formattedPrice}`;
       }
     }
 
-    // 15. Description
-    const description = nextDataProps.description ||
-                        jsonLdData.description ||
-                        getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description', '.description-text', '#description']) ||
-                        getMeta(['og:description', 'description']);
+    // --- 11, 12, 13. DEALER & RATING ---
+    const dealerContainer = findSectionContainer(['Seller Details', 'Dealer Details', 'Seller Information', 'Dealer Information', 'Dealership'], [
+      '[data-test="dealer-card"]', '[data-testid="dealer-card"]',
+      '[data-test="seller-info"]', '[data-testid="seller-info"]',
+      '.seller-info', '.dealer-info', '.dealer-card', 'aside[class*="dealer"]', 'div[class*="dealer"]'
+    ]);
 
-    // 16. Price (Cash price numeric string)
-    const rawPrice = nextDataProps.price ||
-                     jsonLdData.offers?.price ||
-                     getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ||
-                     getMeta(['product:price:amount']);
+    let dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
+    if (!dealerName && dealerContainer) {
+      dealerName = getSelectorText(dealerContainer, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', 'a[href*="/dealers/"]', '.seller-info__title', '.dealer-title', 'h2', 'h3', 'h4', 'strong']);
+    }
+    if (!dealerName) {
+      dealerName = getSelectorText(doc, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '#dealer-name', 'a[href*="/dealers/"]', '.seller-info__title']);
+    }
 
-    // 17. Source URL (Canonical URL)
+    let dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
+    if (!dealerAddress && dealerContainer) {
+      dealerAddress = getSelectorText(dealerContainer, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.seller-info__address', '.dealer-address', '.dealer-location', 'p', 'span']);
+    }
+    if (!dealerAddress) {
+      dealerAddress = getSelectorText(doc, ['[data-test="location"]', '[data-testid="location"]', '[data-test="dealer-address"]', '#car-location', '.location-text', '.vehicle-location']);
+    }
+
+    let averageRating = nextDataProps.dealer?.rating || nextDataProps.dealer?.aggregateRating || '';
+    if (!averageRating && jsonLdData.offers?.seller?.aggregateRating) {
+      const agg = jsonLdData.offers.seller.aggregateRating;
+      const val = agg.ratingValue || '';
+      const count = agg.reviewCount || '';
+      if (val) averageRating = `${val}${count ? ` (${count} Reviews)` : ''}`;
+    }
+    if (!averageRating && dealerContainer) {
+      averageRating = getSelectorText(dealerContainer, ['[data-test="dealer-rating"]', '[data-testid="dealer-rating"]', '[data-test="rating"]', '.rating-badge', '.seller-rating', '.dealer-rating']);
+    }
+    if (!averageRating) {
+      averageRating = getSelectorText(doc, ['[data-test="dealer-rating"]', '[data-testid="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
+    }
+    if (!averageRating) {
+      const targetEl = dealerContainer || doc.body;
+      const match = (targetEl.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)/i);
+      if (match) {
+        averageRating = `${match[1]} (${match[2]} Reviews)`;
+      }
+    }
+
+    // --- 14. FEATURES ---
+    let featuresList = nextDataProps.features || [];
+    if (typeof featuresList === 'string') {
+      featuresList = featuresList.split('\n').map(f => f.trim()).filter(Boolean);
+    }
+
+    if (!featuresList || featuresList.length === 0) {
+      const featuresContainer = findSectionContainer(['Features', 'Key Features', 'Vehicle Features', 'Standard Features', 'Optional Features', 'Equipment', 'Specification'], [
+        '[data-test="features"]', '[data-testid="features"]',
+        '#car-features', '.features-list', '.equipment-list', 'section[class*="features"]', 'div[class*="features"]'
+      ]);
+      if (featuresContainer) {
+        const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], p');
+        const items = [];
+        itemEls.forEach(el => {
+          const txt = (el.textContent || '').trim();
+          if (txt && txt.length > 1 && txt.length < 100 && !/^(features|key features|show more|view all|read more)$/i.test(txt)) {
+            if (!items.includes(txt)) items.push(txt);
+          }
+        });
+        if (items.length > 0) featuresList = items;
+      }
+    }
+
+    // --- 15. DESCRIPTION ---
+    let description = nextDataProps.description || '';
+    if (!description) {
+      const descContainer = findSectionContainer(['Description', 'Seller Description', 'Dealer Description', 'Seller Comments', 'Dealer Comments', 'Vehicle Overview'], [
+        '[data-test="description"]', '[data-testid="description"]',
+        '#car-description', '.vehicle-description', '.description-text', 'section[class*="description"]', 'div[class*="description"]'
+      ]);
+      if (descContainer) {
+        const contentEl = descContainer.querySelector('p, [class*="content"], [class*="body"], [class*="text"]') || descContainer;
+        const txt = (contentEl.textContent || '').trim();
+        description = txt.replace(/^(?:Seller\s+|Dealer\s+)?Description\s*/i, '').replace(/Read\s*more\s*$/i, '').trim();
+      }
+    }
+    if (!description && jsonLdData.description && jsonLdData.description.length > 60) {
+      description = jsonLdData.description.trim();
+    }
+    if (!description) {
+      description = getMeta(['og:description', 'description']);
+    }
+
+    // --- 17. SOURCE URL ---
     const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                       doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                       getMeta(['og:url']) ||
@@ -288,7 +516,7 @@ const CarsCoZaAdapter = {
       averageRating,
       features: featuresList,
       description,
-      price: rawPrice,
+      price: formattedPrice || rawPrice,
       sourceUrl
     };
   }
