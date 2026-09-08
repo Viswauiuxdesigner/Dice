@@ -126,7 +126,6 @@ const CarsCoZaAdapter = {
         titleDescription = fullTitle.replace(/^\d{4}\s+/, '').trim();
       }
     } else {
-      // Regexp fallback: Match "YYYY Make Model" vs trim/variant
       const m = fullTitle.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
       if (m && m[2].trim()) {
         title = m[1].trim();
@@ -141,11 +140,11 @@ const CarsCoZaAdapter = {
     const year = yearVal || getSpecByLabel(['Year', 'Registration Year']) || getDOMText(['#spec-year']);
 
     // 4. Kilometers Driven
-    const rawMileage = nextDataProps.mileage ||
-                       jsonLdData.mileageFromOdometer?.value ||
-                       jsonLdData.mileageFromOdometer ||
-                       getSpecByLabel(['Kilometers Driven', 'Mileage', 'Odometer']) ||
-                       getDOMText(['#spec-mileage', '[data-test="mileage"]', '.spec-mileage']);
+    const kilometersDriven = nextDataProps.mileage ||
+                               jsonLdData.mileageFromOdometer?.value ||
+                               jsonLdData.mileageFromOdometer ||
+                               getSpecByLabel(['Kilometers Driven', 'Mileage', 'Odometer']) ||
+                               getDOMText(['#spec-mileage', '[data-test="mileage"]', '.spec-mileage']);
 
     // 5. Transmission
     const transmission = nextDataProps.transmission ||
@@ -160,10 +159,10 @@ const CarsCoZaAdapter = {
                  getDOMText(['#spec-fuel']);
 
     // 7. 4x2 / 4x4 (Drivetrain)
-    const rawDrivetrain = nextDataProps.drivetrain ||
-                          jsonLdData.driveWheelConfiguration ||
-                          getSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type']) ||
-                          getDOMText(['#spec-drivetrain']);
+    const drivetrain = nextDataProps.drivetrain ||
+                         jsonLdData.driveWheelConfiguration ||
+                         getSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type']) ||
+                         getDOMText(['#spec-drivetrain']);
 
     // 8. Body Color
     const bodyColor = nextDataProps.colour ||
@@ -224,10 +223,10 @@ const CarsCoZaAdapter = {
       title,
       titleDescription,
       year,
-      kilometersDriven: rawMileage,
+      kilometersDriven,
       transmission,
       fuel,
-      drivetrain: rawDrivetrain,
+      drivetrain,
       bodyColor,
       condition,
       pricingSummary,
