@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.5
-// @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, icon-anchored extraction)
+// @version      2.0.6
+// @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
 // @match        *://*/*cars-co-za-sample.html*
@@ -107,7 +107,7 @@
     }
   };
 
-  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER (Icon-Anchored & Section-Scoped Cascader) ---
+  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER (Semantic Leaf & Value-Anchored Extractor) ---
   const CarsCoZaAdapter = {
     canHandle(doc) {
       const url = doc.location?.href || '';
@@ -160,7 +160,7 @@
         });
       } catch (e) {}
 
-      // Section & DOM Helpers
+      // Helper: Scoped Text Lookup
       const getSelectorText = (root, selectors) => {
         if (!root) return '';
         for (const sel of selectors) {
@@ -183,33 +183,7 @@
         return '';
       };
 
-      const findSectionContainer = (headings, explicitSelectors = []) => {
-        for (const sel of explicitSelectors) {
-          try {
-            const el = doc.querySelector(sel);
-            if (el) return el;
-          } catch (e) {}
-        }
-        const headingElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b');
-        for (const h of headingElements) {
-          const text = (h.textContent || '').trim().toLowerCase();
-          for (const target of headings) {
-            if (text === target.toLowerCase() || (text.includes(target.toLowerCase()) && text.length < target.length + 15)) {
-              let el = h.parentElement;
-              while (el && el !== doc.body && el !== doc.documentElement) {
-                if (el.textContent.length < 1000 && !el.classList?.contains('container') && !el.classList?.contains('page-container')) {
-                  return el;
-                }
-                el = el.parentElement;
-              }
-              return h.parentElement;
-            }
-          }
-        }
-        return null;
-      };
-
-      // --- 1 & 2. TITLE & TITLE DESCRIPTION (Strict Header Scoping) ---
+      // --- 1 & 2. TITLE & TITLE DESCRIPTION ---
       const h1El = doc.querySelector('[data-test="heading"], [data-testid="heading"], [data-test="title"], [data-testid="title"], h1.heading-sm, h1.title, h1');
       let rawHeadingText = h1El ? (h1El.textContent || '').trim() : '';
       if (!rawHeadingText) {
@@ -217,7 +191,6 @@
       }
       rawHeadingText = rawHeadingText.replace(/\s+for\s+sale.*$/i, '').replace(/\s*-\s*R\s*[\d\s,.]+.*$/i, '').trim();
 
-      // Look for explicit variant/subtitle element strictly associated with heading
       let rawVariantText = getSelectorText(doc, [
         '[data-test="variant"]', '[data-testid="variant"]',
         '[data-test="subtitle"]', '[data-testid="subtitle"]',
@@ -282,81 +255,21 @@
         titleDescription = '';
       }
 
-      // --- 3. ICON-ANCHORED & SECTION-SCOPED CHIP EXTRACTOR ---
-      const iconChipMap = {};
-
-      function inspectChipIconType(chipEl) {
-        const attributesToCheck = ['class', 'className', 'data-testid', 'data-icon', 'aria-label', 'title', 'id', 'name'];
-        const allTokens = [];
-
-        attributesToCheck.forEach(attr => {
-          const val = chipEl.getAttribute ? chipEl.getAttribute(attr) : '';
-          if (val) allTokens.push(val);
-        });
-
-        const iconEls = chipEl.querySelectorAll('svg, i, img, [class*="icon"], [data-icon], [data-testid*="icon"]');
-        iconEls.forEach(icon => {
-          attributesToCheck.forEach(attr => {
-            const val = icon.getAttribute ? icon.getAttribute(attr) : '';
-            if (val) allTokens.push(val);
-          });
-          const uses = icon.querySelectorAll('use, path');
-          uses.forEach(u => {
-            attributesToCheck.forEach(attr => {
-              const val = u.getAttribute ? u.getAttribute(attr) : '';
-              if (val) allTokens.push(val);
-            });
-          });
-        });
-
-        const attrStr = allTokens.join(' ').toLowerCase();
-
-        if (/calendar|year|reg-year|date|regdate/i.test(attrStr)) return 'year';
-        if (/odometer|speedometer|mileage|gauge|road|tachometer|distance|speed/i.test(attrStr)) return 'mileage';
-        if (/transmission|gearbox|gear|shifter|clutch|stick|manual|auto/i.test(attrStr)) return 'transmission';
-        if (/fuel|pump|petrol|gas|station|charging|energy/i.test(attrStr)) return 'fuel';
-        if (/drivetrain|axle|wheel|drive|4x4|4x2|4wd|awd|traction/i.test(attrStr)) return 'drivetrain';
-        if (/palette|paint|color|colour|brush|bucket|swatch|tint/i.test(attrStr)) return 'color';
-        if (/condition|checklist|check|shield|badge|verified|inspection|heart/i.test(attrStr)) return 'condition';
-
-        return null;
-      }
-
-      // Scoped Summary Chips Container
-      const summaryContainer = findSectionContainer(['Vehicle Overview', 'Summary', 'Quick Specs', 'Overview', 'Key Specs'], [
-        '[data-test="vehicle-specs"]', '[data-testid="vehicle-specs"]',
-        '[data-test="quick-specs"]', '[data-testid="quick-specs"]',
-        '[data-test="key-specs"]', '[data-testid="key-specs"]',
-        '[data-test="summary-specs"]', '[data-testid="summary-specs"]',
-        '[class*="quick-specs"]', '[class*="quickSpecs"]',
-        '[class*="key-specs"]', '[class*="keySpecs"]',
-        '[class*="vehicle-specs"]', '[class*="vehicleSpecs"]',
-        '[class*="specs-grid"]', '[class*="overview-grid"]',
-        '[class*="summary-grid"]', '[class*="vehicle-overview"]'
-      ]);
-
-      const orderedChips = [];
-
-      if (summaryContainer) {
-        const chipElements = summaryContainer.querySelectorAll(
-          '[data-test*="spec-item"], [data-testid*="spec-item"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="spec-item"], [class*="overview-item"], [class*="quick-spec"], [class*="summary-item"], div, li, span'
-        );
-
-        chipElements.forEach(chip => {
-          if (chip.querySelectorAll('div, li, p').length <= 1) {
-            const txt = (chip.textContent || '').trim();
-            if (!txt || txt.length > 50) return;
-            if (!orderedChips.includes(txt)) orderedChips.push(txt);
-
-            const iconType = inspectChipIconType(chip);
-            if (iconType && !iconChipMap[iconType]) {
-              iconChipMap[iconType] = txt;
-            }
+      // --- 3. VEHICLE SUMMARY & TECHNICAL SPECS (Semantic Value Anchors) ---
+      const allLeafElements = [];
+      const walker = doc.createTreeWalker(doc.body || doc, NodeFilter.SHOW_ELEMENT, null, false);
+      let currentNode = walker.nextNode();
+      while (currentNode) {
+        if (currentNode.children.length === 0 || (currentNode.children.length === 1 && currentNode.querySelector('svg, i, img, span'))) {
+          const txt = (currentNode.textContent || '').trim();
+          if (txt && txt.length > 0 && txt.length < 60) {
+            allLeafElements.push({ el: currentNode, text: txt });
           }
-        });
+        }
+        currentNode = walker.nextNode();
       }
 
-      // Scoped Technical Specifications Table / DL Key-Value mapping
+      // Key-Value Table Mapping (if specifications table exists)
       const specTableMap = {};
       const specRows = doc.querySelectorAll('table tr, dl > div, dl tr, [class*="spec-row"], [class*="vehicle-details__list"] tr');
       specRows.forEach(row => {
@@ -369,8 +282,10 @@
         }
       });
 
-      // --- 3. YEAR ---
-      let year = iconChipMap.year || '';
+      // 3. Year
+      let year = '';
+      const yrLeaf = allLeafElements.find(item => /^(19\d\d|20\d\d)$/.test(item.text));
+      if (yrLeaf) year = yrLeaf.text;
       if (!year) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/year|model year|registration/i.test(k) && /^(19\d\d|20\d\d)$/.test(v)) {
@@ -379,20 +294,16 @@
           }
         }
       }
-      if (!year) {
-        const yrChip = orderedChips.find(c => /^(19\d\d|20\d\d)$/.test(c.trim()));
-        if (yrChip) year = yrChip.trim();
-      }
-      if (!year) {
-        year = nextDataProps.year || jsonLdData.vehicleModelDate || '';
-      }
+      if (!year) year = nextDataProps.year || jsonLdData.vehicleModelDate || '';
       if (!year) {
         const match = rawHeadingText.match(/\b(19\d\d|20\d\d)\b/);
         if (match) year = match[1];
       }
 
-      // --- 4. KILOMETERS DRIVEN ---
-      let kilometersDriven = iconChipMap.mileage || '';
+      // 4. Kilometers Driven
+      let kilometersDriven = '';
+      const kmLeaf = allLeafElements.find(item => /^\s*(\d[\d\s,.]*)\s*(?:km|kms|kilometres|kilometers)\s*$/i.test(item.text));
+      if (kmLeaf) kilometersDriven = kmLeaf.text;
       if (!kilometersDriven) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/mileage|kilometer|odometer|km/i.test(k) && /\d/.test(v)) {
@@ -402,22 +313,16 @@
         }
       }
       if (!kilometersDriven) {
-        const kmChip = orderedChips.find(c => /\b\d[\d\s,.]*\s*(?:km|kms|kilometres|kilometers)\b/i.test(c));
-        if (kmChip) kilometersDriven = kmChip.trim();
-      }
-      if (!kilometersDriven) {
         kilometersDriven = nextDataProps.mileage || jsonLdData.mileageFromOdometer?.value || (typeof jsonLdData.mileageFromOdometer === 'string' ? jsonLdData.mileageFromOdometer : '') || '';
       }
-      if (!kilometersDriven) {
-        kilometersDriven = getSelectorText(doc, ['[data-test="mileage"]', '[data-testid="mileage"]', '[data-test="kilometers"]', '[data-testid="kilometers"]', '#spec-mileage', '.spec-mileage', '[data-test*="odometer"]']);
-      }
-      // Strict Guard: Reject GTB, models, text without digits
       if (kilometersDriven && (!/\d/.test(kilometersDriven) || /^(gtb|ferrari|mazda|automatic|manual|petrol|diesel|red|white|blue|4x2|4x4)$/i.test(kilometersDriven))) {
         kilometersDriven = '';
       }
 
-      // --- 5. TRANSMISSION ---
-      let transmission = iconChipMap.transmission || '';
+      // 5. Transmission
+      let transmission = '';
+      const transLeaf = allLeafElements.find(item => /^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto|steptronic|dsg)$/i.test(item.text));
+      if (transLeaf) transmission = transLeaf.text;
       if (!transmission) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/transmission|gearbox/i.test(k) && /automatic|manual|semi|cvt|dual clutch/i.test(v)) {
@@ -427,21 +332,16 @@
         }
       }
       if (!transmission) {
-        const transChip = orderedChips.find(c => /^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(c.trim()));
-        if (transChip) transmission = transChip.trim();
-      }
-      if (!transmission) {
         transmission = nextDataProps.transmission || nextDataProps.gearbox || jsonLdData.vehicleTransmission || '';
       }
-      if (!transmission) {
-        transmission = getSelectorText(doc, ['[data-test="transmission"]', '[data-testid="transmission"]', '[data-test="gearbox"]', '#spec-transmission', '.spec-transmission']);
-      }
-      if (transmission && !/^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto)$/i.test(transmission.trim())) {
+      if (transmission && !/^(automatic|manual|semi-automatic|automated manual|cvt|dual clutch|sequential|direct drive|auto|steptronic|dsg)$/i.test(transmission.trim())) {
         transmission = '';
       }
 
-      // --- 6. FUEL ---
-      let fuel = iconChipMap.fuel || '';
+      // 6. Fuel
+      let fuel = '';
+      const fuelLeaf = allLeafElements.find(item => /^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(item.text));
+      if (fuelLeaf) fuel = fuelLeaf.text;
       if (!fuel) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/fuel/i.test(k) && /petrol|diesel|hybrid|electric|phev|gas|lpg/i.test(v)) {
@@ -451,21 +351,16 @@
         }
       }
       if (!fuel) {
-        const fuelChip = orderedChips.find(c => /^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(c.trim()));
-        if (fuelChip) fuel = fuelChip.trim();
-      }
-      if (!fuel) {
         fuel = nextDataProps.fuel || nextDataProps.fuelType || nextDataProps.fuel_type || jsonLdData.fuelType || '';
-      }
-      if (!fuel) {
-        fuel = getSelectorText(doc, ['[data-test="fuel"]', '[data-testid="fuel"]', '[data-test="fuel-type"]', '#spec-fuel', '.spec-fuel']);
       }
       if (fuel && !/^(petrol|diesel|hybrid|electric|plug-in hybrid|phev|hydrogen|lpg|gas|unleaded|premium)$/i.test(fuel.trim())) {
         fuel = '';
       }
 
-      // --- 7. 4x2 / 4x4 (DRIVETRAIN) ---
-      let drivetrain = iconChipMap.drivetrain || '';
+      // 7. 4x2 / 4x4 (Drivetrain)
+      let drivetrain = '';
+      const dtLeaf = allLeafElements.find(item => /^(4x2|4x4|fwd|rwd|awd|4wd|front-wheel drive|rear-wheel drive|all-wheel drive|four-wheel drive)$/i.test(item.text));
+      if (dtLeaf) drivetrain = dtLeaf.text;
       if (!drivetrain) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/4x2|4x4|drivetrain|drive\s*type|driven\s*wheels|wheel\s*drive/i.test(k)) {
@@ -475,14 +370,7 @@
         }
       }
       if (!drivetrain) {
-        const dtChip = orderedChips.find(c => /^(4x2|4x4|fwd|rwd|awd|4wd|front-wheel drive|rear-wheel drive|all-wheel drive|four-wheel drive)$/i.test(c.trim()));
-        if (dtChip) drivetrain = dtChip.trim();
-      }
-      if (!drivetrain) {
         drivetrain = nextDataProps.drivetrain || nextDataProps.drive || nextDataProps.driveType || nextDataProps.driveWheelConfiguration || jsonLdData.driveWheelConfiguration || '';
-      }
-      if (!drivetrain) {
-        drivetrain = getSelectorText(doc, ['[data-test="drivetrain"]', '[data-testid="drivetrain"]', '[data-test="drive"]', '#spec-drivetrain', '.spec-drivetrain']);
       }
       if (drivetrain) {
         if (/4x4|awd|4wd|all-wheel|four-wheel/i.test(drivetrain)) drivetrain = '4x4';
@@ -490,8 +378,11 @@
         else drivetrain = '';
       }
 
-      // --- 8. BODY COLOR ---
-      let bodyColor = iconChipMap.color || '';
+      // 8. Body Color
+      let bodyColor = '';
+      const knownColors = ['red', 'white', 'black', 'silver', 'grey', 'gray', 'blue', 'yellow', 'green', 'orange', 'brown', 'bronze', 'gold', 'purple', 'beige', 'maroon', 'burgundy', 'charcoal', 'navy', 'rosso corsa', 'bianco', 'nero', 'giallo'];
+      const colorLeaf = allLeafElements.find(item => knownColors.includes(item.text.toLowerCase()));
+      if (colorLeaf) bodyColor = colorLeaf.text;
       if (!bodyColor) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/colou?r|body\s*colou?r/i.test(k) && !/^(gtb|automatic|petrol|4x2|4x4|\d+)$/i.test(v)) {
@@ -501,22 +392,16 @@
         }
       }
       if (!bodyColor) {
-        const knownColors = ['red', 'white', 'black', 'silver', 'grey', 'gray', 'blue', 'yellow', 'green', 'orange', 'brown', 'bronze', 'gold', 'purple', 'beige', 'maroon', 'burgundy', 'charcoal', 'navy', 'rosso corsa', 'bianco', 'nero', 'giallo'];
-        const colorChip = orderedChips.find(c => knownColors.includes(c.trim().toLowerCase()));
-        if (colorChip) bodyColor = colorChip.trim();
-      }
-      if (!bodyColor) {
         bodyColor = nextDataProps.colour || nextDataProps.color || nextDataProps.bodyColour || nextDataProps.bodyColor || nextDataProps.exteriorColor || jsonLdData.color || '';
-      }
-      if (!bodyColor) {
-        bodyColor = getSelectorText(doc, ['[data-test="colour"]', '[data-testid="colour"]', '[data-test="color"]', '[data-testid="color"]', '#spec-colour', '.spec-colour']);
       }
       if (bodyColor && (/\d|\b(reviews?|ratings?|gtb|ferrari|mazda|auto|petrol|diesel)\b/i.test(bodyColor) || bodyColor.length > 25)) {
         bodyColor = '';
       }
 
-      // --- 9. CONDITION ---
-      let condition = iconChipMap.condition || '';
+      // 9. Condition
+      let condition = '';
+      const condLeaf = allLeafElements.find(item => /^(?:excellent|good|clean|fair|used|new|demo)\s*condition$/i.test(item.text) || /^(excellent condition|good condition|clean condition|fair condition)$/i.test(item.text));
+      if (condLeaf) condition = condLeaf.text;
       if (!condition) {
         for (const [k, v] of Object.entries(specTableMap)) {
           if (/condition/i.test(k) && !/^(gtb|automatic|petrol|\d+)$/i.test(v)) {
@@ -526,38 +411,26 @@
         }
       }
       if (!condition) {
-        const condChip = orderedChips.find(c => /condition|used|new|demo|clean|excellent|good/i.test(c.trim()) && !/^(gtb|automatic|petrol|\d+)$/i.test(c.trim()));
-        if (condChip) condition = condChip.trim();
-      }
-      if (!condition) {
         condition = nextDataProps.condition || nextDataProps.vehicleCondition || '';
         if (!condition && jsonLdData.itemCondition) {
           condition = jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '');
         }
       }
-      if (!condition) {
-        condition = getSelectorText(doc, ['[data-test="condition"]', '[data-testid="condition"]', '#spec-condition', '.spec-condition']);
-      }
       if (condition && (condition.toLowerCase() === titleDescription.toLowerCase() || /^(gtb|ferrari|mazda|\d+)$/i.test(condition))) {
         condition = '';
       }
 
-      // --- 10 & 16. PRICING & PRICING SUMMARY (Strict Pricing Section Scoping) ---
-      const pricingContainer = findSectionContainer(['Pricing Summary', 'Pricing', 'Price Summary', 'Finance Summary'], [
-        '[data-test="pricing-summary-container"]', '[data-testid="pricing-summary-container"]',
-        '.pricing-card', '.pricing-summary', '.price-section', '[class*="pricing-summary"]'
-      ]);
-
+      // --- 10 & 16. PRICING & PRICING SUMMARY ---
       let rawPrice = '';
       let installmentText = '';
 
-      if (pricingContainer) {
-        rawPrice = getSelectorText(pricingContainer, ['[data-test="price"]', '[data-testid="price"]', '.price-cash', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
-        installmentText = getSelectorText(pricingContainer, [
-          '[data-test="est-installment"]', '[data-testid="est-installment"]',
-          '[data-test="installment"]', '[data-testid="installment"]',
-          '.price-installment', '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
-        ]);
+      // Find cash price element: matches R ... (excluding installments ending in p/m)
+      const priceCandidates = allLeafElements.filter(item => {
+        return /^\s*R\s*([1-9]\d{0,2}(?:[\s,.]\d{3})+|[1-9]\d{4,8})\s*$/i.test(item.text) && !/p\/m|pm|per month|\/m/i.test(item.text);
+      });
+
+      if (priceCandidates.length > 0) {
+        rawPrice = priceCandidates[0].text;
       }
 
       if (!rawPrice) {
@@ -570,74 +443,76 @@
       let priceDigits = String(rawPrice).replace(/[^\d]/g, '');
       let formattedPrice = priceDigits ? Number(priceDigits).toLocaleString('fr-FR').replace(/\s/g, ' ') : '';
 
-      if (!installmentText) {
-        installmentText = getSelectorText(doc, [
-          '[data-test="est-installment"]', '[data-testid="est-installment"]',
-          '[data-test="installment"]', '[data-testid="installment"]',
-          '.price-installment', '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
-        ]);
-      }
-      if (!installmentText && nextDataProps.installment) {
-        installmentText = `Est. ${nextDataProps.installment}`;
-      }
-      if (!installmentText && pricingContainer) {
-        const match = (pricingContainer.textContent || '').match(/(?:Est\.\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i);
-        if (match) {
-          installmentText = match[0].trim();
-          if (!installmentText.toLowerCase().startsWith('est.')) {
-            installmentText = `Est. ${installmentText}`;
-          }
+      // Find installment text
+      const instLeaf = allLeafElements.find(item => /(?:Est\.?\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i.test(item.text));
+      if (instLeaf) {
+        installmentText = instLeaf.text.trim();
+        if (!installmentText.toLowerCase().startsWith('est.')) {
+          installmentText = `Est. ${installmentText}`;
         }
       }
 
-      let pricingSummary = '';
-      if (pricingContainer) {
-        pricingSummary = getSelectorText(pricingContainer, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary']);
-      }
-      if (!pricingSummary) {
-        pricingSummary = nextDataProps.pricingSummary || getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary', '[class*="pricing-summary"]']);
+      if (!installmentText && nextDataProps.installment) {
+        installmentText = `Est. ${nextDataProps.installment}`;
       }
 
+      let pricingSummary = '';
+      const sumLeaf = allLeafElements.find(item => /^R\s*[\d\s,.]+\s*(?:Est\.|\/|\+)\s*R\s*[\d\s,.]+/i.test(item.text));
+      if (sumLeaf) {
+        pricingSummary = sumLeaf.text.trim();
+      }
+      if (!pricingSummary) {
+        pricingSummary = getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary']);
+      }
       if (!pricingSummary && formattedPrice) {
         if (installmentText) {
           pricingSummary = `R ${formattedPrice} / ${installmentText}`;
         } else {
           pricingSummary = `R ${formattedPrice}`;
         }
+      } else if (!pricingSummary && nextDataProps.pricingSummary) {
+        pricingSummary = nextDataProps.pricingSummary;
       }
 
-      // --- 11, 12, 13. DEALER & RATING (Strict Dealer / Rating Section Scoping) ---
-      const dealerContainer = findSectionContainer(['Seller Details', 'Dealer Details', 'Seller Information', 'Dealer Information', 'Dealership'], [
-        '[data-test="dealer-card"]', '[data-testid="dealer-card"]',
-        '[data-test="seller-info"]', '[data-testid="seller-info"]',
-        '.dealer-card', '.seller-info', '.dealer-info', 'aside[class*="dealer"]', 'div[class*="dealer"]'
-      ]);
-
+      // --- 11, 12, 13. DEALER & RATING ---
       let dealerName = '';
-      if (dealerContainer) {
-        dealerName = getSelectorText(dealerContainer, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '.dealer-name', 'a[href*="/dealers/"]', '.seller-info__title', '.dealer-title', 'h2', 'h3', 'h4', 'strong']);
+      let dealerAddress = '';
+      let averageRating = '';
+
+      // Look for dealer link or dealer name in DOM
+      const dealerLink = doc.querySelector('a[href*="/dealers/"], a[href*="/dealer/"]');
+      if (dealerLink) {
+        dealerName = (dealerLink.textContent || '').trim();
+      }
+      if (!dealerName) {
+        dealerName = getSelectorText(doc, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '.dealer-name', '.seller-info__title', '.dealer-title', '#dealer-name']);
+      }
+      if (!dealerName) {
+        const dealerHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller|Dealer)\s*(?:Details|Information|Info)$/i.test(el.textContent.trim()));
+        if (dealerHeading) {
+          const card = dealerHeading.closest('div, section, aside') || dealerHeading.parentElement;
+          const nameEl = card.querySelector('.dealer-name, strong, h3, h4, a');
+          if (nameEl && nameEl !== dealerHeading) dealerName = nameEl.textContent.trim();
+        }
       }
       if (!dealerName) {
         dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
       }
-      if (!dealerName) {
-        dealerName = getSelectorText(doc, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '#dealer-name', 'a[href*="/dealers/"]', '.seller-info__title']);
-      }
 
-      let dealerAddress = '';
-      if (dealerContainer) {
-        dealerAddress = getSelectorText(dealerContainer, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.dealer-address', '.seller-info__address', '.dealer-location', 'p', 'span']);
+      // Dealer Address
+      dealerAddress = getSelectorText(doc, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.dealer-address', '.seller-info__address', '.dealer-location']);
+      if (!dealerAddress) {
+        const locLeaf = allLeafElements.find(item => /\b(Sandton|Cape Town|Johannesburg|Durban|Pretoria|Centurion|Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape)\b/i.test(item.text) && item.text.length < 50 && !item.text.startsWith('R'));
+        if (locLeaf) dealerAddress = locLeaf.text;
       }
       if (!dealerAddress) {
         dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
       }
-      if (!dealerAddress) {
-        dealerAddress = getSelectorText(doc, ['[data-test="location"]', '[data-testid="location"]', '[data-test="dealer-address"]', '#car-location', '.location-text', '.vehicle-location']);
-      }
 
-      let averageRating = '';
-      if (dealerContainer) {
-        const match = (dealerContainer.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
+      // Average Rating
+      const ratingLeaf = allLeafElements.find(item => /(?:★\s*)?([1-5]\.\d)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i.test(item.text));
+      if (ratingLeaf) {
+        const match = ratingLeaf.text.match(/(?:★\s*)?([1-5]\.\d)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
         if (match) {
           const score = match[1];
           const count = match[2] || match[3] || '';
@@ -645,17 +520,13 @@
         }
       }
       if (!averageRating) {
-        const ratingContainer = findSectionContainer(['Reviews', 'Google Reviews', 'Dealer Rating', 'Rating'], [
-          '[data-test="dealer-rating"]', '[data-testid="dealer-rating"]',
-          '[data-test="rating-card"]', '[data-testid="rating-card"]',
-          '.rating-badge', '.rating-box', '.seller-rating', '.dealer-rating', '.google-rating'
-        ]);
-        if (ratingContainer) {
-          const match = (ratingContainer.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
-          if (match) {
-            const score = match[1];
-            const count = match[2] || match[3] || '';
-            averageRating = count ? `${score} (${count} Reviews)` : score;
+        const scoreLeaf = allLeafElements.find(item => /^[★\s]*([1-5]\.\d)[★\s]*$/.test(item.text));
+        const revLeaf = allLeafElements.find(item => /^\s*(\d+)\s*(?:reviews?|ratings?)\s*$/i.test(item.text));
+        if (scoreLeaf && revLeaf) {
+          const scoreMatch = scoreLeaf.text.match(/([1-5]\.\d)/);
+          const revMatch = revLeaf.text.match(/(\d+)/);
+          if (scoreMatch && revMatch) {
+            averageRating = `${scoreMatch[1]} (${revMatch[1]} Reviews)`;
           }
         }
       }
@@ -668,21 +539,22 @@
           if (val) averageRating = `${val}${count ? ` (${count} Reviews)` : ''}`;
         }
       }
-      if (!averageRating) {
-        averageRating = getSelectorText(doc, ['[data-test="dealer-rating"]', '[data-testid="dealer-rating"]', '#dealer-rating', '.rating-badge', '.seller-rating']);
-      }
 
-      // --- 14. FEATURES (Strict Features Section Scoping) ---
+      // --- 14. FEATURES (Preserved Successful Logic) ---
       let featuresList = nextDataProps.features || [];
       if (typeof featuresList === 'string') {
         featuresList = featuresList.split('\n').map(f => f.trim()).filter(Boolean);
       }
 
       if (!featuresList || featuresList.length === 0) {
-        const featuresContainer = findSectionContainer(['Features', 'Key Features', 'Vehicle Features', 'Standard Features', 'Optional Features', 'Equipment', 'Specification'], [
-          '[data-test="features"]', '[data-testid="features"]',
-          '#car-features', '.features-grid', '.features-list', '.equipment-list', 'section[class*="features"]', 'div[class*="features"]'
-        ]);
+        const featureHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Key\s+|Vehicle\s+|Standard\s+)?Features$/i.test(el.textContent.trim()));
+        let featuresContainer = null;
+        if (featureHeading) {
+          featuresContainer = featureHeading.closest('div, section, article') || featureHeading.parentElement;
+        } else {
+          featuresContainer = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, .features-grid, .features-list, .equipment-list');
+        }
+
         if (featuresContainer) {
           const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], div, p');
           const items = [];
@@ -698,25 +570,32 @@
         }
       }
 
-      // --- 15. DESCRIPTION (Strict Description Section Scoping) ---
+      // --- 15. DESCRIPTION ---
       let description = '';
-      const descContainer = findSectionContainer(['Description', 'Seller Description', 'Dealer Description', 'Seller Comments', 'Dealer Comments', 'Vehicle Overview'], [
-        '[data-test="description"]', '[data-testid="description"]',
-        '#car-description', '.description-content', '.vehicle-description', '.description-text', 'section[class*="description"]', 'div[class*="description"]'
-      ]);
-      if (descContainer) {
-        const contentEl = descContainer.querySelector('p, [class*="content"], [class*="body"], [class*="text"]') || descContainer;
-        const txt = (contentEl.textContent || '').trim();
-        description = txt.replace(/^(?:Seller\s+|Dealer\s+)?Description\s*/i, '').replace(/Read\s*more\s*$/i, '').trim();
+      const descHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller\s+|Dealer\s+)?(?:Description|Comments)$/i.test(el.textContent.trim()));
+      if (descHeading) {
+        let candidateEl = descHeading.nextElementSibling;
+        while (candidateEl && !description) {
+          const pEl = candidateEl.querySelector('p, [class*="content"], [class*="text"], [class*="body"]') || (candidateEl.tagName === 'P' || candidateEl.tagName === 'DIV' ? candidateEl : null);
+          if (pEl) {
+            let txt = (pEl.textContent || '').trim();
+            txt = txt.replace(/^(?:Seller\s+|Dealer\s+)?Description\s*/i, '').replace(/Read\s*more\s*$/i, '').trim();
+            if (txt.length > 20 && !txt.toLowerCase().includes('back to search')) {
+              description = txt;
+              break;
+            }
+          }
+          candidateEl = candidateEl.nextElementSibling;
+        }
+      }
+      if (!description) {
+        description = getSelectorText(doc, ['[data-test="description"]', '[data-testid="description"]', '#car-description', '.vehicle-description', '.description-content', '.description-text']);
       }
       if (!description) {
         description = nextDataProps.description || '';
       }
       if (!description && jsonLdData.description && jsonLdData.description.length > 60) {
         description = jsonLdData.description.trim();
-      }
-      if (!description) {
-        description = getMeta(['og:description', 'description']);
       }
 
       // --- 17. SOURCE URL ---
