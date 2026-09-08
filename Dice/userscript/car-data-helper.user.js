@@ -1,14 +1,17 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      1.0.0
-// @description  Local car data extraction and form filling helper
+// @version      2.0.1
+// @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
+// @match        *://*/*cars-co-za-sample.html*
+// @match        file://*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
-// ==/UserScript==
+// @run-at       document-end
+// ==UserScript==
 
 (function () {
   'use strict';
@@ -22,17 +25,21 @@
     normalizeYear(val) {
       if (!val) return '';
       const match = String(val).match(/\b(19\d\d|20\d\d)\b/);
-      return match ? parseInt(match[1], 10) : '';
+      return match ? match[1] : '';
     },
-    normalizeMileage(val) {
+    normalizeKilometersDriven(val) {
       if (!val) return '';
-      const digitsOnly = String(val).replace(/[^\d]/g, '');
-      return digitsOnly ? parseInt(digitsOnly, 10) : '';
+      const str = String(val).trim();
+      if (str.toLowerCase().includes('km')) return str;
+      const digitsOnly = str.replace(/[^\d]/g, '');
+      if (!digitsOnly) return str;
+      return `${Number(digitsOnly).toLocaleString('fr-FR').replace(/\s/g, ' ')} km`;
     },
     normalizePrice(val) {
       if (!val) return '';
       const digitsOnly = String(val).replace(/[^\d]/g, '');
-      return digitsOnly ? parseInt(digitsOnly, 10) : '';
+      if (!digitsOnly) return String(val).trim();
+      return Number(digitsOnly).toLocaleString('fr-FR').replace(/\s/g, ' ');
     },
     normalizeTransmission(val) {
       if (!val) return '';
@@ -50,19 +57,22 @@
       if (str.includes('electric') || str.includes('ev')) return 'Electric';
       return this.cleanText(val);
     },
-    normalizeDrivetrain(val) {
+    normalize4x2Or4x4(val) {
       if (!val) return '';
       const str = String(val).toLowerCase();
-      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel')) return 'AWD/4WD';
-      if (str.includes('fwd') || str.includes('front')) return 'FWD';
-      if (str.includes('rwd') || str.includes('rear')) return 'RWD';
+      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel')) return '4x4';
+      if (str.includes('4x2') || str.includes('fwd') || str.includes('rwd') || str.includes('front') || str.includes('rear') || str.includes('two-wheel')) return '4x2';
       return this.cleanText(val);
     },
     normalizeFeatures(val) {
-      if (!val) return [];
-      if (Array.isArray(val)) return val.map(f => this.cleanText(f)).filter(Boolean);
-      if (typeof val === 'string') return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean);
-      return [];
+      if (!val) return '';
+      if (Array.isArray(val)) {
+        return val.map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      }
+      if (typeof val === 'string') {
+        return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      }
+      return '';
     }
   };
 
@@ -77,11 +87,9 @@
       }
       if (key === 'year') {
         const num = Number(value);
-        if (isNaN(num) || num < 1900 || num > 2030) return { status: 'invalid', label: 'Invalid Format' };
-      }
-      if (key === 'price' || key === 'mileage') {
-        const num = Number(value);
-        if (isNaN(num) || num < 0) return { status: 'invalid', label: 'Invalid Format' };
+        if (isNaN(num) || num < 1900 || num > new Date().getFullYear() + 1) {
+          return { status: 'missing', label: 'Missing / Needs Review' };
+        }
       }
       return { status: 'extracted', label: 'Extracted' };
     },
@@ -94,7 +102,7 @@
     }
   };
 
-  // --- 3. CARS.CO.ZA ADAPTER ---
+  // --- 3. PRODUCTION CARS.CO.ZA ADAPTER ---
   const CarsCoZaAdapter = {
     canHandle(doc) {
       const url = doc.location?.href || '';
@@ -102,14 +110,31 @@
     },
     extract(doc) {
       let jsonLdData = {};
+      let nextDataProps = {};
+
       try {
         const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
         scripts.forEach(script => {
           try {
             const parsed = JSON.parse(script.textContent);
-            if (parsed['@type'] === 'Car' || parsed['@type'] === 'Vehicle') jsonLdData = parsed;
+            if (parsed['@type'] === 'Car' || parsed['@type'] === 'Vehicle' || parsed['@type'] === 'Product') {
+              jsonLdData = parsed;
+            } else if (Array.isArray(parsed)) {
+              const found = parsed.find(item => item['@type'] === 'Car' || item['@type'] === 'Vehicle');
+              if (found) jsonLdData = found;
+            }
           } catch (e) {}
         });
+      } catch (e) {}
+
+      try {
+        const nextScript = doc.querySelector('script[id="__NEXT_DATA__"]');
+        if (nextScript) {
+          const nextJson = JSON.parse(nextScript.textContent);
+          nextDataProps = nextJson.props?.pageProps?.listing ||
+                          nextJson.props?.pageProps?.vehicle ||
+                          nextJson.props?.pageProps?.initialState?.listing || {};
+        }
       } catch (e) {}
 
       const getMeta = (props) => {
@@ -123,26 +148,32 @@
       const getDOMText = (selectors) => {
         for (const sel of selectors) {
           const el = doc.querySelector(sel);
-          if (el && el.textContent) return el.textContent.trim();
+          if (el) {
+            const txt = el.textContent || el.getAttribute('content') || el.value;
+            if (txt && txt.trim().length > 0) return txt.trim();
+          }
         }
         return '';
       };
 
       const getDOMList = (selectors) => {
         for (const sel of selectors) {
-          const els = doc.querySelectorAll(sel);
-          if (els && els.length > 0) return Array.from(els).map(el => el.textContent.trim()).filter(Boolean);
+          const elements = doc.querySelectorAll(sel);
+          if (elements && elements.length > 0) {
+            const list = Array.from(elements).map(el => el.textContent.trim()).filter(Boolean);
+            if (list.length > 0) return list;
+          }
         }
         return [];
       };
 
       const getSpecByLabel = (labels) => {
-        const items = doc.querySelectorAll('.spec-item, .vehicle-details__item, tr, dl, li');
+        const items = doc.querySelectorAll('.spec-item, .vehicle-details__item, tr, dl, li, [class*="spec"]');
         for (const item of items) {
           const txt = item.textContent || '';
           for (const lbl of labels) {
             if (txt.toLowerCase().includes(lbl.toLowerCase())) {
-              const valEl = item.querySelector('.value, td:nth-child(2), dd');
+              const valEl = item.querySelector('.value, td:nth-child(2), dd, span:last-child');
               if (valEl && valEl.textContent) return valEl.textContent.trim();
               const parts = txt.split(/[:\n\t]/);
               if (parts.length > 1) return parts[parts.length - 1].trim();
@@ -152,279 +183,334 @@
         return '';
       };
 
-      const title = jsonLdData.name || getMeta(['og:title', 'title']) || getDOMText(['h1.heading-sm', 'h1', '[data-test="heading"]']);
-      const titleDescription = title ? title.replace(/^\d{4}\s+/, '').trim() : '';
+      const fullTitle = nextDataProps.title ||
+                        getDOMText(['[data-test="heading"]', 'h1.heading-sm', '#car-title', 'h1.title', 'h1']) ||
+                        jsonLdData.name ||
+                        getMeta(['og:title', 'title']);
+
+      let title = '';
+      let titleDescription = '';
+
+      const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
+      const modelName = nextDataProps.model || jsonLdData.model || '';
+      const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
+
+      if (brandName && modelName) {
+        title = `${yearVal} ${brandName} ${modelName}`.trim();
+        titleDescription = fullTitle.replace(title, '').trim();
+        if (!titleDescription && fullTitle !== title) {
+          titleDescription = fullTitle.replace(/^\d{4}\s+/, '').trim();
+        }
+      } else {
+        const m = fullTitle.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
+        if (m && m[2].trim()) {
+          title = m[1].trim();
+          titleDescription = m[2].trim();
+        } else {
+          title = fullTitle;
+          titleDescription = getDOMText(['.variant-title', '.sub-heading']) || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.replace(/^\d{4}\s+/, '').trim() : '');
+        }
+      }
+
+      const year = yearVal || getSpecByLabel(['Year', 'Registration Year']) || getDOMText(['#spec-year']);
+
+      const kilometersDriven = nextDataProps.mileage ||
+                               jsonLdData.mileageFromOdometer?.value ||
+                               jsonLdData.mileageFromOdometer ||
+                               getSpecByLabel(['Kilometers Driven', 'Mileage', 'Odometer']) ||
+                               getDOMText(['#spec-mileage', '[data-test="mileage"]', '.spec-mileage']);
+
+      const transmission = nextDataProps.transmission ||
+                           jsonLdData.vehicleTransmission ||
+                           getSpecByLabel(['Transmission', 'Gearbox']) ||
+                           getDOMText(['#spec-transmission']);
+
+      const fuel = nextDataProps.fuel ||
+                   jsonLdData.fuelType ||
+                   getSpecByLabel(['Fuel', 'Fuel Type']) ||
+                   getDOMText(['#spec-fuel']);
+
+      const drivetrain = nextDataProps.drivetrain ||
+                         jsonLdData.driveWheelConfiguration ||
+                         getSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type']) ||
+                         getDOMText(['#spec-drivetrain']);
+
+      const bodyColor = nextDataProps.colour ||
+                        jsonLdData.color ||
+                        getSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']) ||
+                        getDOMText(['#spec-colour']);
+
+      const condition = nextDataProps.condition ||
+                        (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') ||
+                        getSpecByLabel(['Condition', 'Vehicle Condition']) ||
+                        getDOMText(['#spec-condition']);
+
+      const pricingSummary = nextDataProps.pricingSummary ||
+                             getDOMText(['[data-test="pricing-summary"]', '.price-summary', '#car-price-summary', '.pricing-container']) ||
+                             (getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ? `${getDOMText(['[data-test="price"]', '#car-price', '.price-amount'])} ${getDOMText(['[data-test="est-installment"]', '.est-payment'])}`.trim() : '') ||
+                             (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
+
+      const dealerName = nextDataProps.dealer?.name ||
+                         jsonLdData.offers?.seller?.name ||
+                         getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title']);
+
+      const dealerAddress = nextDataProps.dealer?.address ||
+                            nextDataProps.location ||
+                            getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text']);
+
+      const averageRating = nextDataProps.dealer?.rating ||
+                            (jsonLdData.offers?.seller?.aggregateRating ? `${jsonLdData.offers.seller.aggregateRating.ratingValue} (${jsonLdData.offers.seller.aggregateRating.reviewCount || ''} Reviews)`.trim() : '') ||
+                            getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge']);
+
+      const rawFeatures = nextDataProps.features ||
+                          getDOMList(['[data-test="features"] li', '#car-features li', '.features-list li']);
+
+      const description = nextDataProps.description ||
+                          jsonLdData.description ||
+                          getMeta(['og:description', 'description']) ||
+                          getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description']);
+
+      const rawPrice = nextDataProps.price ||
+                       jsonLdData.offers?.price ||
+                       getMeta(['product:price:amount']) ||
+                       getDOMText(['[data-test="price"]', '#car-price', '.price-amount']);
+
+      const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
+                        doc.querySelector('#source-url-meta')?.getAttribute('href') ||
+                        getMeta(['og:url']) ||
+                        doc.location?.href || '';
 
       return {
         title,
         titleDescription,
-        year: jsonLdData.vehicleModelDate || getSpecByLabel(['Year']) || (title.match(/\b(19\d\d|20\d\d)\b/) ? title.match(/\b(19\d\d|20\d\d)\b/)[1] : ''),
-        mileage: jsonLdData.mileageFromOdometer?.value || getSpecByLabel(['Mileage']) || getDOMText(['[data-test="mileage"]']),
-        transmission: jsonLdData.vehicleTransmission || getSpecByLabel(['Transmission']),
-        fuel: jsonLdData.fuelType || getSpecByLabel(['Fuel']),
-        drivetrain: jsonLdData.driveWheelConfiguration || getSpecByLabel(['Drivetrain', 'Drive Type']),
-        bodyColour: jsonLdData.color || getSpecByLabel(['Colour', 'Color']),
-        condition: (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') || getSpecByLabel(['Condition']),
-        price: jsonLdData.offers?.price || getMeta(['product:price:amount']) || getDOMText(['[data-test="price"]', '.price-amount']),
-        dealerName: jsonLdData.offers?.seller?.name || getDOMText(['[data-test="dealer-name"]', '.seller-info__title']),
-        dealerRating: jsonLdData.offers?.seller?.aggregateRating?.ratingValue || getDOMText(['[data-test="dealer-rating"]']),
-        location: getDOMText(['[data-test="location"]', '.location-text']),
-        features: getDOMList(['[data-test="features"] li', '.features-list li']),
-        description: jsonLdData.description || getMeta(['og:description', 'description']) || getDOMText(['[data-test="description"]']),
-        engineSize: getSpecByLabel(['Engine Size', 'Engine Capacity']),
-        VIN: jsonLdData.vehicleIdentificationNumber || getSpecByLabel(['VIN', 'Stock No']),
-        serviceHistory: getSpecByLabel(['Service History']),
-        sourceUrl: doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || doc.location?.href || ''
+        year,
+        kilometersDriven,
+        transmission,
+        fuel,
+        drivetrain,
+        bodyColor,
+        condition,
+        pricingSummary,
+        dealerName,
+        dealerAddress,
+        averageRating,
+        features: rawFeatures,
+        description,
+        price: rawPrice,
+        sourceUrl
       };
     }
   };
 
-  // --- 4. STORAGE BRIDGE (GM Storage with LocalStorage fallback) ---
-  const StorageBridge = {
-    set(key, val) {
+  // --- 4. CLIPBOARD HELPERS ---
+  async function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
       try {
-        if (typeof GM_setValue !== 'undefined') {
-          GM_setValue(key, JSON.stringify(val));
-          return;
-        }
-      } catch (e) {}
-      localStorage.setItem(`car_helper_${key}`, JSON.stringify(val));
-    },
-    get(key) {
-      try {
-        if (typeof GM_getValue !== 'undefined') {
-          const val = GM_getValue(key);
-          return val ? JSON.parse(val) : null;
-        }
-      } catch (e) {}
-      const val = localStorage.getItem(`car_helper_${key}`);
-      return val ? JSON.parse(val) : null;
-    },
-    remove(key) {
-      try {
-        if (typeof GM_deleteValue !== 'undefined') {
-          GM_deleteValue(key);
-          return;
-        }
-      } catch (e) {}
-      localStorage.removeItem(`car_helper_${key}`);
-    }
-  };
-
-  // --- 5. DEFAULT FIELD MAPPING ---
-  const DefaultMapping = {
-    title: { targetSelector: '#target_vehicle_title', targetType: 'text' },
-    titleDescription: { targetSelector: '#target_vehicle_title', targetType: 'text' },
-    year: { targetSelector: '#target_year', targetType: 'number' },
-    mileage: { targetSelector: '#target_mileage', targetType: 'number' },
-    transmission: { targetSelector: '#target_transmission', targetType: 'select' },
-    fuel: { targetSelector: '#target_fuel', targetType: 'select' },
-    drivetrain: { targetSelector: '#target_drivetrain', targetType: 'select' },
-    bodyColour: { targetSelector: '#target_body_colour', targetType: 'text' },
-    condition: { targetSelector: 'input[name="target_condition"]', targetType: 'radio' },
-    price: { targetSelector: '#target_price', targetType: 'number' },
-    dealerName: { targetSelector: '#target_dealer_name', targetType: 'text' },
-    dealerRating: { targetSelector: '#target_dealer_rating', targetType: 'number' },
-    location: { targetSelector: '#target_location', targetType: 'text' },
-    features: { targetSelector: 'input[name="target_features[]"]', targetType: 'checkbox_group' },
-    description: { targetSelector: '#target_description', targetType: 'textarea' },
-    engineSize: { targetSelector: '#target_engine_capacity', targetType: 'text' },
-    VIN: { targetSelector: '#target_vin', targetType: 'text' },
-    serviceHistory: { targetSelector: '#target_service_history', targetType: 'select' },
-    sourceUrl: { targetSelector: '#target_source_url', targetType: 'url' }
-  };
-
-  // --- 6. TARGET FORM FILLER ENGINE ---
-  const FormFiller = {
-    fill(doc, extracted, mapping) {
-      if (!extracted || !extracted.normalized) return { error: 'No extracted vehicle data found.' };
-      if (!mapping) mapping = DefaultMapping;
-
-      const norm = extracted.normalized;
-      const report = extracted.validationReport || {};
-      const results = { filled: [], skippedMissing: [], failed: [] };
-
-      for (const key of Object.keys(mapping)) {
-        const m = mapping[key];
-        const val = norm[key];
-        const selector = m.targetSelector;
-        const status = report[key]?.status;
-
-        if (!selector || selector === 'Not mapped') continue;
-
-        if (val === undefined || val === null || val === '' || status === 'missing') {
-          results.skippedMissing.push({ field: key, selector });
-          continue;
-        }
-
-        try {
-          const res = this.fillField(doc, selector, m.targetType, val);
-          if (res.success) results.filled.push({ field: key, selector, val });
-          else results.failed.push({ field: key, selector, error: res.error });
-        } catch (e) {
-          results.failed.push({ field: key, selector, error: e.message });
-        }
-      }
-      return { success: true, results };
-    },
-
-    fillField(doc, selector, type, value) {
-      if (type === 'radio') {
-        const radios = doc.querySelectorAll(selector);
-        let matched = false;
-        radios.forEach(r => {
-          if ((r.value || '').toLowerCase() === String(value).toLowerCase() ||
-              (r.labels?.[0]?.textContent || '').toLowerCase().includes(String(value).toLowerCase())) {
-            r.checked = true;
-            this.fireEvents(r);
-            matched = true;
-          }
-        });
-        return matched ? { success: true } : { success: false, error: 'No matching radio option.' };
-      }
-
-      if (type === 'checkbox_group') {
-        const checkboxes = doc.querySelectorAll(selector);
-        const arr = Array.isArray(value) ? value.map(v => String(v).toLowerCase()) : [String(value).toLowerCase()];
-        checkboxes.forEach(cb => {
-          const val = (cb.value || '').toLowerCase();
-          const lbl = (cb.labels?.[0]?.textContent || '').toLowerCase();
-          const check = arr.some(v => val.includes(v) || lbl.includes(v));
-          cb.checked = check;
-          if (check) this.fireEvents(cb);
-        });
-        return { success: true };
-      }
-
-      const el = doc.querySelector(selector);
-      if (!el) return { success: false, error: `Element not found: ${selector}` };
-
-      if (el.tagName === 'SELECT') {
-        let matched = false;
-        for (let i = 0; i < el.options.length; i++) {
-          const opt = el.options[i];
-          if (opt.value.toLowerCase() === String(value).toLowerCase() ||
-              opt.text.toLowerCase().includes(String(value).toLowerCase())) {
-            el.selectedIndex = i;
-            matched = true;
-            break;
-          }
-        }
-        if (!matched) el.value = value;
-        this.fireEvents(el);
-        return { success: true };
-      }
-
-      el.value = String(value);
-      this.fireEvents(el);
-      return { success: true };
-    },
-
-    fireEvents(el) {
-      try {
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        await navigator.clipboard.writeText(text);
+        return true;
       } catch (e) {}
     }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let success = false;
+    try {
+      success = document.execCommand('copy');
+    } catch (e) {}
+    document.body.removeChild(textarea);
+    return success;
+  }
+
+  // --- 5. UI PANEL DISPATCHER ---
+  const FIELD_LABELS = {
+    title: 'Title',
+    titleDescription: 'Title Description',
+    year: 'Year',
+    kilometersDriven: 'Kilometers Driven',
+    transmission: 'Transmission',
+    fuel: 'Fuel',
+    drivetrain: '4x2 / 4x4',
+    bodyColor: 'Body Color',
+    condition: 'Condition',
+    pricingSummary: 'Pricing Summary',
+    dealerName: 'Dealer Name',
+    dealerAddress: 'Dealer Address',
+    averageRating: 'Average Rating',
+    features: 'Features',
+    description: 'Description',
+    price: 'Price',
+    sourceUrl: 'Source URL'
   };
 
-  // --- 7. UI WIDGET INJECTION ---
-  function injectWidget() {
-    const isSourcePage = CarsCoZaAdapter.canHandle(document) || document.location.href.includes('dummy-source.html');
-    const isTargetPage = document.querySelector('form') !== null || document.location.href.includes('dummy-target.html') || document.location.href.includes('tamilnadu2026.dicewebfreelancers.com');
+  function performExtraction() {
+    const raw = CarsCoZaAdapter.extract(document);
+    const normalized = {
+      title: Normalizers.cleanText(raw.title),
+      titleDescription: Normalizers.cleanText(raw.titleDescription),
+      year: Normalizers.normalizeYear(raw.year),
+      kilometersDriven: Normalizers.normalizeKilometersDriven(raw.kilometersDriven),
+      transmission: Normalizers.normalizeTransmission(raw.transmission),
+      fuel: Normalizers.normalizeFuel(raw.fuel),
+      drivetrain: Normalizers.normalize4x2Or4x4(raw.drivetrain),
+      bodyColor: Normalizers.cleanText(raw.bodyColor),
+      condition: Normalizers.cleanText(raw.condition),
+      pricingSummary: Normalizers.cleanText(raw.pricingSummary),
+      dealerName: Normalizers.cleanText(raw.dealerName),
+      dealerAddress: Normalizers.cleanText(raw.dealerAddress),
+      averageRating: Normalizers.cleanText(raw.averageRating),
+      features: Normalizers.normalizeFeatures(raw.features),
+      description: Normalizers.cleanText(raw.description),
+      price: Normalizers.normalizePrice(raw.price),
+      sourceUrl: raw.sourceUrl || document.location.href
+    };
 
-    if (!isSourcePage && !isTargetPage) return;
+    const validationReport = Validators.validateAll(normalized);
+    renderExtractedFields(normalized, validationReport);
+  }
+
+  function injectExtractorUI() {
+    if (document.getElementById('car-data-helper-widget')) return;
 
     const widget = document.createElement('div');
     widget.id = 'car-data-helper-widget';
-    widget.style.cssText = 'position:fixed; bottom:20px; right:20px; z-index:99999; font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:#0f172a; color:#f8fafc; border:2px solid #3b82f6; border-radius:12px; padding:14px; box-shadow:0 10px 25px rgba(0,0,0,0.5); width:300px; max-width:90vw;';
+    widget.style.cssText = `
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 999999;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      border: 2px solid #3b82f6;
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+      width: 360px;
+      max-width: 92vw;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    `;
 
-    if (isSourcePage) {
-      widget.innerHTML = `
-        <div style="font-weight:700; color:#60a5fa; margin-bottom:6px; font-size:0.95rem;">🚗 Car Data Extractor</div>
-        <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:10px;">Cars.co.za listing detected.</p>
-        <button id="cdh-btn-extract" style="width:100%; background:#10b981; color:#fff; border:none; padding:10px; border-radius:6px; font-weight:600; cursor:pointer;">
-          🔍 Extract Car Data
+    widget.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="font-weight:700; color:#60a5fa; font-size:1rem; display:flex; align-items:center; gap:6px;">
+          <span>🚗 Car Data Helper (v2.0.1)</span>
+        </div>
+        <button id="cdh-toggle-btn" style="background:transparent; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer; padding:2px 6px;">−</button>
+      </div>
+      
+      <div id="cdh-body" style="display:flex; flex-direction:column; gap:10px; overflow:hidden;">
+        <button id="cdh-btn-extract" style="width:100%; background:#10b981; color:#fff; border:none; padding:12px; border-radius:8px; font-weight:700; font-size:0.95rem; cursor:pointer; min-height:44px;">
+          🔄 Re-extract Data
         </button>
-        <div id="cdh-status" style="margin-top:10px; font-size:0.8rem; display:none;"></div>
+
+        <div id="cdh-results-container" style="display:block; overflow-y:auto; max-height:60vh; padding-right:4px;">
+          <div id="cdh-fields-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(widget);
+
+    let isMinimized = false;
+    document.getElementById('cdh-toggle-btn').addEventListener('click', () => {
+      const body = document.getElementById('cdh-body');
+      isMinimized = !isMinimized;
+      body.style.display = isMinimized ? 'none' : 'flex';
+      document.getElementById('cdh-toggle-btn').textContent = isMinimized ? '+' : '−';
+    });
+
+    document.getElementById('cdh-btn-extract').addEventListener('click', () => {
+      performExtraction();
+    });
+
+    performExtraction();
+  }
+
+  function renderExtractedFields(data, report) {
+    const fieldsList = document.getElementById('cdh-fields-list');
+    if (!fieldsList) return;
+    fieldsList.innerHTML = '';
+
+    for (const key of Object.keys(FIELD_LABELS)) {
+      const label = FIELD_LABELS[key];
+      const val = data[key];
+      const status = report[key]?.status;
+      const isMissing = !val || status === 'missing';
+
+      const fieldCard = document.createElement('div');
+      fieldCard.style.cssText = `
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       `;
-      document.body.appendChild(widget);
 
-      document.getElementById('cdh-btn-extract').addEventListener('click', () => {
-        const raw = CarsCoZaAdapter.extract(document);
-        const normalized = {
-          title: Normalizers.cleanText(raw.title),
-          titleDescription: Normalizers.cleanText(raw.titleDescription),
-          year: Normalizers.normalizeYear(raw.year),
-          mileage: Normalizers.normalizeMileage(raw.mileage),
-          transmission: Normalizers.normalizeTransmission(raw.transmission),
-          fuel: Normalizers.normalizeFuel(raw.fuel),
-          drivetrain: Normalizers.normalizeDrivetrain(raw.drivetrain),
-          bodyColour: Normalizers.cleanText(raw.bodyColour),
-          condition: Normalizers.cleanText(raw.condition),
-          price: Normalizers.normalizePrice(raw.price),
-          dealerName: Normalizers.cleanText(raw.dealerName),
-          dealerRating: raw.dealerRating ? parseFloat(raw.dealerRating) || '' : '',
-          location: Normalizers.cleanText(raw.location),
-          features: Normalizers.normalizeFeatures(raw.features),
-          description: Normalizers.cleanText(raw.description),
-          engineSize: Normalizers.cleanText(raw.engineSize),
-          VIN: Normalizers.cleanText(raw.VIN),
-          serviceHistory: Normalizers.cleanText(raw.serviceHistory),
-          sourceUrl: raw.sourceUrl || document.location.href
-        };
+      const displayVal = isMissing ? 'Missing / Needs Review' : val;
+      const displayValColor = isMissing ? '#f87171' : '#f1f5f9';
+      const isMultiline = String(val).includes('\n') || key === 'description' || key === 'features';
 
-        const validationReport = Validators.validateAll(normalized);
-        const packageData = { raw, normalized, validationReport, timestamp: new Date().toISOString() };
-
-        StorageBridge.set('extractedCarData', packageData);
-
-        const statusEl = document.getElementById('cdh-status');
-        statusEl.style.display = 'block';
-        const extCount = Object.values(validationReport).filter(v => v.status === 'extracted').length;
-        statusEl.innerHTML = `
-          <div style="background:#065f46; color:#34d399; padding:8px; border-radius:4px; margin-top:6px;">
-            ✅ Extracted ${extCount} fields!<br>Data saved to local storage. Switch to target form and tap "Fill Target Form".
-          </div>
-        `;
-      });
-    } else if (isTargetPage) {
-      widget.innerHTML = `
-        <div style="font-weight:700; color:#60a5fa; margin-bottom:6px; font-size:0.95rem;">📝 Car Target Form Helper</div>
-        <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:10px;">Target intake form detected.</p>
-        <button id="cdh-btn-fill" style="width:100%; background:#3b82f6; color:#fff; border:none; padding:10px; border-radius:6px; font-weight:600; cursor:pointer;">
-          ⚡ Fill Target Form
-        </button>
-        <div id="cdh-status" style="margin-top:10px; font-size:0.8rem; display:none;"></div>
+      fieldCard.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:0.75rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">${label}</span>
+          <button class="cdh-copy-btn" data-key="${key}" style="background:#3b82f6; color:#ffffff; border:none; border-radius:6px; padding:6px 12px; font-weight:700; font-size:0.78rem; cursor:pointer; min-height:36px;">
+            COPY
+          </button>
+        </div>
+        <div style="font-size:0.85rem; color:${displayValColor}; white-space:${isMultiline ? 'pre-wrap' : 'normal'}; word-break:break-word; max-height:${isMultiline ? '120px' : 'none'}; overflow-y:${isMultiline ? 'auto' : 'visible'}; background:#0f172a; padding:6px 8px; border-radius:4px; border:1px solid #1e293b;">
+          ${escapeHtml(displayVal)}
+        </div>
       `;
-      document.body.appendChild(widget);
 
-      document.getElementById('cdh-btn-fill').addEventListener('click', () => {
-        const extracted = StorageBridge.get('extractedCarData');
-        const statusEl = document.getElementById('cdh-status');
-        statusEl.style.display = 'block';
+      fieldsList.appendChild(fieldCard);
 
-        if (!extracted) {
-          statusEl.innerHTML = `<div style="background:#7f1d1d; color:#f87171; padding:8px; border-radius:4px;">❌ No extracted data found in storage! Extract from Cars.co.za first.</div>`;
-          return;
+      const copyBtn = fieldCard.querySelector('.cdh-copy-btn');
+      copyBtn.addEventListener('click', async () => {
+        const textToCopy = isMissing ? '' : String(val);
+        const copied = await copyToClipboard(textToCopy);
+        if (copied) {
+          copyBtn.textContent = '✓ Copied';
+          copyBtn.style.background = '#10b981';
+          setTimeout(() => {
+            copyBtn.textContent = 'COPY';
+            copyBtn.style.background = '#3b82f6';
+          }, 2000);
+        } else {
+          copyBtn.textContent = 'Failed';
+          copyBtn.style.background = '#ef4444';
+          setTimeout(() => {
+            copyBtn.textContent = 'COPY';
+            copyBtn.style.background = '#3b82f6';
+          }, 2000);
         }
-
-        const mapping = StorageBridge.get('fieldMapping') || DefaultMapping;
-        const res = FormFiller.fill(document, extracted, mapping);
-
-        statusEl.innerHTML = `
-          <div style="background:#065f46; color:#34d399; padding:8px; border-radius:4px;">
-            ✅ Form Populated!<br>
-            - Filled: ${res.results.filled.length} fields<br>
-            - Skipped (Missing): ${res.results.skippedMissing.length} fields<br>
-            - Failed: ${res.results.failed.length} fields<br>
-            <em style="color:#fbbf24; font-size:0.75rem;">Manual review & submit required.</em>
-          </div>
-        `;
       });
     }
   }
 
-  window.addEventListener('load', injectWidget);
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    injectExtractorUI();
+  } else {
+    window.addEventListener('DOMContentLoaded', injectExtractorUI);
+  }
 })();

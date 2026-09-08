@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.0
+// @version      2.0.1
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -402,7 +402,7 @@
     widget.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <div style="font-weight:700; color:#60a5fa; font-size:1rem; display:flex; align-items:center; gap:6px;">
-          <span>🚗 Car Data Helper (v2.0.0)</span>
+          <span>🚗 Car Data Helper (v2.0.1)</span>
         </div>
         <button id="cdh-toggle-btn" style="background:transparent; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer; padding:2px 6px;">−</button>
       </div>

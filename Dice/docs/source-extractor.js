@@ -1,73 +1,14 @@
 /**
- * Modular Source Extractor Architecture
- * Supports multiple source site adapters:
- * 1. DummySourceAdapter (Phase 1 practice page)
- * 2. CarsCoZaAdapter (Phase 2 real Cars.co.za listing pages)
+ * Production Cars.co.za Dynamic Source Extractor Engine
+ * Works dynamically across ANY Cars.co.za car-detail / listing page.
  *
- * Deterministic DOM extraction using JSON-LD microdata, __NEXT_DATA__ props, meta tags, and DOM selectors.
- * Never fabricates values. Missing or masked values return status: "Missing / Needs Review".
+ * Extraction Layers (Cascade):
+ * 1. Schema.org JSON-LD Microdata (<script type="application/ld+json">)
+ * 2. Next.js Hydration Props (<script id="__NEXT_DATA__">)
+ * 3. OpenGraph / Canonical Meta Tags
+ * 4. Cars.co.za Rendered DOM Spec Tables & Badges
  */
 
-// Adapter 1: Dummy Practice Page Adapter
-const DummySourceAdapter = {
-  id: 'dummy',
-  name: 'Dummy Practice Page Adapter',
-
-  canHandle(doc) {
-    if (!doc) return false;
-    const url = doc.location?.href || '';
-    return url.includes('dummy-source.html') || doc.querySelector('#car-title') !== null;
-  },
-
-  extract(doc) {
-    const getDOMText = (selectors) => {
-      for (const sel of selectors) {
-        const el = doc.querySelector(sel);
-        if (el) {
-          const txt = el.textContent || el.getAttribute('content') || el.value;
-          if (txt && txt.trim().length > 0) return txt.trim();
-        }
-      }
-      return '';
-    };
-
-    const getDOMList = (selectors) => {
-      for (const sel of selectors) {
-        const elements = doc.querySelectorAll(sel);
-        if (elements && elements.length > 0) {
-          const list = Array.from(elements).map(el => el.textContent.trim()).filter(Boolean);
-          if (list.length > 0) return list;
-        }
-      }
-      return [];
-    };
-
-    const title = getDOMText(['#car-title', '.listing-title']);
-    return {
-      title,
-      titleDescription: title.replace(/^\d{4}\s+/, ''),
-      year: getDOMText(['#spec-year']),
-      mileage: getDOMText(['#spec-mileage']),
-      transmission: getDOMText(['#spec-transmission']),
-      fuel: getDOMText(['#spec-fuel']),
-      drivetrain: getDOMText(['#spec-drivetrain']),
-      bodyColour: getDOMText(['#spec-colour']),
-      condition: getDOMText(['#spec-condition']),
-      price: getDOMText(['#car-price']),
-      dealerName: getDOMText(['#dealer-name']),
-      dealerRating: getDOMText(['#dealer-rating']),
-      location: getDOMText(['#car-location']),
-      features: getDOMList(['#car-features li']),
-      description: getDOMText(['#car-description']),
-      engineSize: getDOMText(['#spec-engine']),
-      VIN: getDOMText(['#spec-vin']),
-      serviceHistory: getDOMText(['#spec-service']),
-      sourceUrl: doc.querySelector('#source-url-meta')?.getAttribute('href') || doc.location?.href || ''
-    };
-  }
-};
-
-// Adapter 2: Cars.co.za Listing Adapter
 const CarsCoZaAdapter = {
   id: 'cars_co_za',
   name: 'Cars.co.za Listing Adapter',
@@ -85,7 +26,7 @@ const CarsCoZaAdapter = {
     let jsonLdData = {};
     let nextDataProps = {};
 
-    // Layer 1: Extract Schema.org JSON-LD microdata
+    // 1. Extract Schema.org JSON-LD microdata
     try {
       const jsonLdScripts = doc.querySelectorAll('script[type="application/ld+json"]');
       jsonLdScripts.forEach(script => {
@@ -101,16 +42,18 @@ const CarsCoZaAdapter = {
       });
     } catch (e) {}
 
-    // Layer 2: Extract Next.js __NEXT_DATA__ page props if present
+    // 2. Extract Next.js __NEXT_DATA__ page props if present
     try {
       const nextScript = doc.querySelector('script[id="__NEXT_DATA__"]');
       if (nextScript) {
         const nextJson = JSON.parse(nextScript.textContent);
-        nextDataProps = nextJson.props?.pageProps?.listing || nextJson.props?.pageProps?.vehicle || {};
+        nextDataProps = nextJson.props?.pageProps?.listing ||
+                        nextJson.props?.pageProps?.vehicle ||
+                        nextJson.props?.pageProps?.initialState?.listing || {};
       }
     } catch (e) {}
 
-    // Layer 3: Extract Meta tags & OpenGraph
+    // Helper: Meta tag extract
     const getMeta = (props) => {
       for (const p of props) {
         const el = doc.querySelector(`meta[property="${p}"], meta[name="${p}"]`);
@@ -119,7 +62,7 @@ const CarsCoZaAdapter = {
       return '';
     };
 
-    // Layer 4: Extract rendered DOM elements
+    // Helper: DOM text extract
     const getDOMText = (selectors) => {
       for (const sel of selectors) {
         const el = doc.querySelector(sel);
@@ -131,6 +74,7 @@ const CarsCoZaAdapter = {
       return '';
     };
 
+    // Helper: DOM list extract
     const getDOMList = (selectors) => {
       for (const sel of selectors) {
         const elements = doc.querySelectorAll(sel);
@@ -142,7 +86,7 @@ const CarsCoZaAdapter = {
       return [];
     };
 
-    // Helper: Find value from spec tables / key-value list items
+    // Helper: Spec table label lookup
     const getSpecByLabel = (labels) => {
       const items = doc.querySelectorAll('.spec-item, .vehicle-details__item, tr, dl, li, [class*="spec"]');
       for (const item of items) {
@@ -151,7 +95,6 @@ const CarsCoZaAdapter = {
           if (txt.toLowerCase().includes(lbl.toLowerCase())) {
             const valEl = item.querySelector('.value, td:nth-child(2), dd, span:last-child');
             if (valEl && valEl.textContent) return valEl.textContent.trim();
-            // Fallback split label: value
             const parts = txt.split(/[:\n\t]/);
             if (parts.length > 1) return parts[parts.length - 1].trim();
           }
@@ -160,150 +103,176 @@ const CarsCoZaAdapter = {
       return '';
     };
 
-    // Extraction with cascade order: NextData -> JSON-LD -> Meta -> DOM Spec Table
-    const title = nextDataProps.title ||
-                  jsonLdData.name ||
-                  getMeta(['og:title', 'title']) ||
-                  getDOMText(['h1.heading-sm', 'h1.title', 'h1', '[data-test="heading"]']);
+    // --- Dynamic Field Extractions ---
 
-    const year = nextDataProps.year ||
-                 jsonLdData.vehicleModelDate ||
-                 jsonLdData.modelDate ||
-                 getSpecByLabel(['Year', 'Registration Year']) ||
-                 (title.match(/\b(19\d\d|20\d\d)\b/) ? title.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
+    // Full raw title heading
+    const fullTitle = nextDataProps.title ||
+                      getDOMText(['[data-test="heading"]', 'h1.heading-sm', '#car-title', 'h1.title', 'h1']) ||
+                      jsonLdData.name ||
+                      getMeta(['og:title', 'title']);
 
-    const mileage = nextDataProps.mileage ||
-                    jsonLdData.mileageFromOdometer?.value ||
-                    jsonLdData.mileageFromOdometer ||
-                    getSpecByLabel(['Mileage', 'Odometer', 'Km']) ||
-                    getDOMText(['[data-test="mileage"]', '.spec-mileage']);
+    // Title (Make/Model) vs Title Description (Trim/Variant)
+    let title = '';
+    let titleDescription = '';
 
-    const price = nextDataProps.price ||
-                  jsonLdData.offers?.price ||
-                  getMeta(['product:price:amount']) ||
-                  getDOMText(['[data-test="price"]', '.price-amount', '.heading-lg.price']);
+    const brandName = nextDataProps.make || (typeof jsonLdData.brand === 'string' ? jsonLdData.brand : jsonLdData.brand?.name) || '';
+    const modelName = nextDataProps.model || jsonLdData.model || '';
+    const yearVal = nextDataProps.year || jsonLdData.vehicleModelDate || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.match(/\b(19\d\d|20\d\d)\b/)[1] : '');
 
+    if (brandName && modelName) {
+      title = `${yearVal} ${brandName} ${modelName}`.trim();
+      titleDescription = fullTitle.replace(title, '').trim();
+      if (!titleDescription && fullTitle !== title) {
+        titleDescription = fullTitle.replace(/^\d{4}\s+/, '').trim();
+      }
+    } else {
+      const m = fullTitle.match(/^((?:19|20)\d\d\s+[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)(.*)$/);
+      if (m && m[2].trim()) {
+        title = m[1].trim();
+        titleDescription = m[2].trim();
+      } else {
+        title = fullTitle;
+        titleDescription = getDOMText(['.variant-title', '.sub-heading']) || (fullTitle.match(/\b(19\d\d|20\d\d)\b/) ? fullTitle.replace(/^\d{4}\s+/, '').trim() : '');
+      }
+    }
+
+    // 3. Year
+    const year = yearVal || getSpecByLabel(['Year', 'Registration Year']) || getDOMText(['#spec-year']);
+
+    // 4. Kilometers Driven
+    const kilometersDriven = nextDataProps.mileage ||
+                               jsonLdData.mileageFromOdometer?.value ||
+                               jsonLdData.mileageFromOdometer ||
+                               getSpecByLabel(['Kilometers Driven', 'Mileage', 'Odometer']) ||
+                               getDOMText(['#spec-mileage', '[data-test="mileage"]', '.spec-mileage']);
+
+    // 5. Transmission
     const transmission = nextDataProps.transmission ||
                          jsonLdData.vehicleTransmission ||
-                         getSpecByLabel(['Transmission', 'Gearbox']);
+                         getSpecByLabel(['Transmission', 'Gearbox']) ||
+                         getDOMText(['#spec-transmission']);
 
+    // 6. Fuel
     const fuel = nextDataProps.fuel ||
                  jsonLdData.fuelType ||
-                 getSpecByLabel(['Fuel', 'Fuel Type']);
+                 getSpecByLabel(['Fuel', 'Fuel Type']) ||
+                 getDOMText(['#spec-fuel']);
 
+    // 7. 4x2 / 4x4 (Drivetrain)
     const drivetrain = nextDataProps.drivetrain ||
-                       jsonLdData.driveWheelConfiguration ||
-                       getSpecByLabel(['Drivetrain', 'Drive Type', 'Wheel Drive']);
+                         jsonLdData.driveWheelConfiguration ||
+                         getSpecByLabel(['4x2 / 4x4', 'Drivetrain', 'Drive Type']) ||
+                         getDOMText(['#spec-drivetrain']);
 
-    const bodyColour = nextDataProps.colour ||
-                       jsonLdData.color ||
-                       getSpecByLabel(['Colour', 'Color', 'Body Colour']);
+    // 8. Body Color
+    const bodyColor = nextDataProps.colour ||
+                      jsonLdData.color ||
+                      getSpecByLabel(['Body Color', 'Body Colour', 'Colour', 'Color']) ||
+                      getDOMText(['#spec-colour']);
 
+    // 9. Condition
     const condition = nextDataProps.condition ||
                       (jsonLdData.itemCondition ? jsonLdData.itemCondition.replace('https://schema.org/', '').replace('Condition', '') : '') ||
-                      getSpecByLabel(['Condition', 'Vehicle Condition']);
+                      getSpecByLabel(['Condition', 'Vehicle Condition']) ||
+                      getDOMText(['#spec-condition']);
 
+    // 10. Pricing Summary (Combined Cash Price + Installment if present)
+    const pricingSummary = nextDataProps.pricingSummary ||
+                           getDOMText(['[data-test="pricing-summary"]', '.price-summary', '#car-price-summary', '.pricing-container']) ||
+                           (getDOMText(['[data-test="price"]', '#car-price', '.price-amount']) ? `${getDOMText(['[data-test="price"]', '#car-price', '.price-amount'])} ${getDOMText(['[data-test="est-installment"]', '.est-payment'])}`.trim() : '') ||
+                           (jsonLdData.offers?.price ? `R ${Number(jsonLdData.offers.price).toLocaleString('fr-FR').replace(/\s/g, ' ')}` : '');
+
+    // 11. Dealer Name
     const dealerName = nextDataProps.dealer?.name ||
                        jsonLdData.offers?.seller?.name ||
-                       getDOMText(['[data-test="dealer-name"]', '.seller-info__title', '.dealer-title']);
+                       getDOMText(['[data-test="dealer-name"]', '#dealer-name', '.seller-info__title']);
 
-    const dealerRating = nextDataProps.dealer?.rating ||
-                         jsonLdData.offers?.seller?.aggregateRating?.ratingValue ||
-                         getDOMText(['[data-test="dealer-rating"]', '.rating-badge']);
+    // 12. Dealer Address / Location
+    const dealerAddress = nextDataProps.dealer?.address ||
+                          nextDataProps.location ||
+                          getDOMText(['[data-test="dealer-address"]', '[data-test="location"]', '#car-location', '.seller-info__address', '.location-text']);
 
-    const location = nextDataProps.location ||
-                     getDOMText(['[data-test="location"]', '.seller-info__address', '.location-text']);
+    // 13. Average Rating
+    const averageRating = nextDataProps.dealer?.rating ||
+                          (jsonLdData.offers?.seller?.aggregateRating ? `${jsonLdData.offers.seller.aggregateRating.ratingValue} (${jsonLdData.offers.seller.aggregateRating.reviewCount || ''} Reviews)`.trim() : '') ||
+                          getDOMText(['[data-test="dealer-rating"]', '#dealer-rating', '.rating-badge']);
 
-    const features = nextDataProps.features ||
-                     getDOMList(['[data-test="features"] li', '.features-list li', '.equipment-list li']);
+    // 14. Features
+    const rawFeatures = nextDataProps.features ||
+                        getDOMList(['[data-test="features"] li', '#car-features li', '.features-list li']);
 
+    // 15. Description
     const description = nextDataProps.description ||
                         jsonLdData.description ||
                         getMeta(['og:description', 'description']) ||
-                        getDOMText(['[data-test="description"]', '.vehicle-description', '#description']);
+                        getDOMText(['[data-test="description"]', '#car-description', '.vehicle-description']);
 
-    const engineSize = nextDataProps.engineSize ||
-                       getSpecByLabel(['Engine Size', 'Engine Capacity', 'Engine']);
+    // 16. Price (Cash Price only)
+    const rawPrice = nextDataProps.price ||
+                     jsonLdData.offers?.price ||
+                     getMeta(['product:price:amount']) ||
+                     getDOMText(['[data-test="price"]', '#car-price', '.price-amount']);
 
-    const VIN = nextDataProps.vin ||
-                jsonLdData.vehicleIdentificationNumber ||
-                getSpecByLabel(['VIN', 'Stock No', 'Stock Number', 'VIN / Stock']);
-
-    const serviceHistory = nextDataProps.serviceHistory ||
-                           getSpecByLabel(['Service History', 'Service Record']);
-
+    // 17. Source URL (Canonical Page URL)
     const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
+                      doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                       getMeta(['og:url']) ||
                       doc.location?.href || '';
-
-    // Title Description (Model / Variant minus year)
-    const titleDescription = title ? title.replace(/^\d{4}\s+/, '').trim() : '';
 
     return {
       title,
       titleDescription,
       year,
-      mileage,
+      kilometersDriven,
       transmission,
       fuel,
       drivetrain,
-      bodyColour,
+      bodyColor,
       condition,
-      price,
+      pricingSummary,
       dealerName,
-      dealerRating,
-      location,
-      features,
+      dealerAddress,
+      averageRating,
+      features: rawFeatures,
       description,
-      engineSize,
-      VIN,
-      serviceHistory,
+      price: rawPrice,
       sourceUrl
     };
   }
 };
 
-// Global Extractor Engine
 window.CarSourceExtractor = {
-  adapters: [CarsCoZaAdapter, DummySourceAdapter],
+  adapters: [CarsCoZaAdapter],
 
   extractFromDocument(doc) {
     if (!doc) doc = document;
-
-    // Select suitable adapter
-    let adapter = this.adapters.find(a => a.canHandle(doc)) || DummySourceAdapter;
-
-    const raw = adapter.extract(doc);
-
-    // Normalize
+    const raw = CarsCoZaAdapter.extract(doc);
     const norm = window.CarNormalizers;
+
     const normalized = {
       title: norm.cleanText(raw.title),
       titleDescription: norm.cleanText(raw.titleDescription),
       year: norm.normalizeYear(raw.year),
-      mileage: norm.normalizeMileage(raw.mileage),
+      kilometersDriven: norm.normalizeKilometersDriven(raw.kilometersDriven),
       transmission: norm.normalizeTransmission(raw.transmission),
       fuel: norm.normalizeFuel(raw.fuel),
-      drivetrain: norm.normalizeDrivetrain(raw.drivetrain),
-      bodyColour: norm.cleanText(raw.bodyColour),
+      drivetrain: norm.normalize4x2Or4x4(raw.drivetrain),
+      bodyColor: norm.cleanText(raw.bodyColor),
       condition: norm.cleanText(raw.condition),
-      price: norm.normalizePrice(raw.price),
+      pricingSummary: norm.cleanText(raw.pricingSummary),
       dealerName: norm.cleanText(raw.dealerName),
-      dealerRating: raw.dealerRating ? parseFloat(raw.dealerRating) || '' : '',
-      location: norm.cleanText(raw.location),
+      dealerAddress: norm.cleanText(raw.dealerAddress),
+      averageRating: norm.cleanText(raw.averageRating),
       features: norm.normalizeFeatures(raw.features),
       description: norm.cleanText(raw.description),
-      engineSize: norm.cleanText(raw.engineSize),
-      VIN: norm.cleanText(raw.VIN),
-      serviceHistory: norm.cleanText(raw.serviceHistory),
+      price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || doc.location?.href || ''
     };
 
-    // Validate
     const validationReport = window.CarValidators.validateCarData(normalized);
 
     return {
-      adapter: adapter.name,
+      adapter: CarsCoZaAdapter.name,
       raw,
       normalized,
       validationReport,

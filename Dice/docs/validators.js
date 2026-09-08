@@ -4,12 +4,10 @@
  * Flags fields as:
  * - Extracted: Valid value extracted
  * - Missing / Needs Review: Field missing, masked, empty, or unparseable
- * - Invalid Format: Value present but violates format expectation
  */
 
 window.CarValidators = {
   validateField(key, value) {
-    // Check missing or masked value
     if (value === null || value === undefined || value === '') {
       return {
         status: 'missing',
@@ -26,25 +24,17 @@ window.CarValidators = {
       };
     }
 
-    // Specific field validations
     if (key === 'year') {
       const num = Number(value);
       if (isNaN(num) || num < 1900 || num > new Date().getFullYear() + 1) {
-        return { status: 'invalid', label: 'Invalid Format', message: `Year out of range: ${value}` };
-      }
-    }
-
-    if (key === 'price' || key === 'mileage') {
-      const num = Number(value);
-      if (isNaN(num) || num < 0) {
-        return { status: 'invalid', label: 'Invalid Format', message: `Must be a positive number: ${value}` };
+        return { status: 'missing', label: 'Missing / Needs Review', message: `Year out of range: ${value}` };
       }
     }
 
     return {
       status: 'extracted',
       label: 'Extracted',
-      message: 'Successfully extracted and normalized.'
+      message: 'Successfully extracted.'
     };
   },
 
