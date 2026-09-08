@@ -1,0 +1,19 @@
+Write-Output "=== TESTING FERRARI LISTING ==="
+$p1 = Start-Process -FilePath 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ArgumentList '--headless', '--dump-dom', '--virtual-time-budget=2000', 'file:///C:/Dice/docs/cars-co-za-ferrari-sample.html' -NoNewWindow -PassThru -RedirectStandardOutput 'ferrari-out.html'
+$p1.WaitForExit(10000)
+$ferrariRaw = Get-Content 'ferrari-out.html' -Raw
+if ($ferrariRaw -match '<pre id="sample-json-out"[^>]*>([\s\S]*?)</pre>') {
+    Write-Output $matches[1]
+} else {
+    Write-Output "Ferrari json not found in output"
+}
+
+Write-Output "`n=== TESTING MAZDA LISTING ==="
+$p2 = Start-Process -FilePath 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ArgumentList '--headless', '--dump-dom', '--virtual-time-budget=2000', 'file:///C:/Dice/docs/cars-co-za-sample.html' -NoNewWindow -PassThru -RedirectStandardOutput 'mazda-out.html'
+$p2.WaitForExit(10000)
+$mazdaRaw = Get-Content 'mazda-out.html' -Raw
+if ($mazdaRaw -match '<pre id="sample-json-out"[^>]*>([\s\S]*?)</pre>') {
+    Write-Output $matches[1]
+} else {
+    Write-Output "Mazda json not found in output"
+}

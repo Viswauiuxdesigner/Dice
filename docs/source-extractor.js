@@ -101,8 +101,15 @@ const CarsCoZaAdapter = {
       for (const h of headingElements) {
         const text = (h.textContent || '').trim().toLowerCase();
         for (const target of headings) {
-          if (text === target.toLowerCase() || (text.includes(target.toLowerCase()) && text.length < target.length + 20)) {
-            return h.closest('section, article, div[class*="section"], div[class*="card"], div[class*="container"], div[class*="block"]') || h.parentElement;
+          if (text === target.toLowerCase() || (text.includes(target.toLowerCase()) && text.length < target.length + 15)) {
+            let el = h.parentElement;
+            while (el && el !== doc.body && el !== doc.documentElement) {
+              if (el.textContent.length < 1000 && !el.classList?.contains('container') && !el.classList?.contains('page-container')) {
+                return el;
+              }
+              el = el.parentElement;
+            }
+            return h.parentElement;
           }
         }
       }
@@ -124,7 +131,7 @@ const CarsCoZaAdapter = {
       '[data-test="derivative"]', '[data-testid="derivative"]',
       '[data-test="sub-heading"]', '[data-testid="sub-heading"]',
       '[data-test="trim"]', '[data-testid="trim"]',
-      '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading', '.subHeading', '.derivative', '.trim'
+      '.vehicle-subtitle', '.vehicle-variant', '.variant-title', '.subtitle', '.sub-heading', '.subHeading', '.derivative', '.trim'
     ]);
 
     if (!rawVariantText && h1El && h1El.nextElementSibling) {
@@ -186,24 +193,30 @@ const CarsCoZaAdapter = {
     const iconChipMap = {};
 
     function inspectChipIconType(chipEl) {
-      const allAttrs = [];
-      for (const attr of chipEl.attributes || []) {
-        allAttrs.push(`${attr.name}="${attr.value}"`);
-      }
+      const attributesToCheck = ['class', 'className', 'data-testid', 'data-icon', 'aria-label', 'title', 'id', 'name'];
+      const allTokens = [];
+
+      attributesToCheck.forEach(attr => {
+        const val = chipEl.getAttribute ? chipEl.getAttribute(attr) : '';
+        if (val) allTokens.push(val);
+      });
+
       const iconEls = chipEl.querySelectorAll('svg, i, img, [class*="icon"], [data-icon], [data-testid*="icon"]');
       iconEls.forEach(icon => {
-        for (const attr of icon.attributes || []) {
-          allAttrs.push(`${attr.name}="${attr.value}"`);
-        }
+        attributesToCheck.forEach(attr => {
+          const val = icon.getAttribute ? icon.getAttribute(attr) : '';
+          if (val) allTokens.push(val);
+        });
         const uses = icon.querySelectorAll('use, path');
         uses.forEach(u => {
-          for (const attr of u.attributes || []) {
-            allAttrs.push(`${attr.name}="${attr.value}"`);
-          }
+          attributesToCheck.forEach(attr => {
+            const val = u.getAttribute ? u.getAttribute(attr) : '';
+            if (val) allTokens.push(val);
+          });
         });
       });
 
-      const attrStr = allAttrs.join(' ').toLowerCase();
+      const attrStr = allTokens.join(' ').toLowerCase();
 
       if (/calendar|year|reg-year|date|regdate/i.test(attrStr)) return 'year';
       if (/odometer|speedometer|mileage|gauge|road|tachometer|distance|speed/i.test(attrStr)) return 'mileage';
@@ -226,29 +239,34 @@ const CarsCoZaAdapter = {
       '[class*="key-specs"]', '[class*="keySpecs"]',
       '[class*="vehicle-specs"]', '[class*="vehicleSpecs"]',
       '[class*="specs-grid"]', '[class*="overview-grid"]',
-      '[class*="summary-grid"]', '[class*="chips"]'
+      '[class*="summary-grid"]', '[class*="vehicle-overview"]'
     ]);
-
-    const chipElements = (summaryContainer || doc).querySelectorAll(
-      '[data-test*="spec-item"], [data-testid*="spec-item"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="spec-item"], [class*="overview-item"], [class*="quick-spec"], [class*="summary-item"]'
-    );
 
     const orderedChips = [];
 
-    chipElements.forEach(chip => {
-      const txt = (chip.textContent || '').trim();
-      if (!txt || txt.length > 50) return;
-      if (!orderedChips.includes(txt)) orderedChips.push(txt);
+    if (summaryContainer) {
+      const chipElements = summaryContainer.querySelectorAll(
+        '[data-test*="spec-item"], [data-testid*="spec-item"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="spec-item"], [class*="overview-item"], [class*="quick-spec"], [class*="summary-item"], div, li, span'
+      );
 
-      const iconType = inspectChipIconType(chip);
-      if (iconType && !iconChipMap[iconType]) {
-        iconChipMap[iconType] = txt;
-      }
-    });
+      chipElements.forEach(chip => {
+        // Must be a leaf/direct card item
+        if (chip.querySelectorAll('div, li, p').length <= 1) {
+          const txt = (chip.textContent || '').trim();
+          if (!txt || txt.length > 50) return;
+          if (!orderedChips.includes(txt)) orderedChips.push(txt);
+
+          const iconType = inspectChipIconType(chip);
+          if (iconType && !iconChipMap[iconType]) {
+            iconChipMap[iconType] = txt;
+          }
+        }
+      });
+    }
 
     // Scoped Technical Specifications Table / DL Key-Value mapping
     const specTableMap = {};
-    const specRows = doc.querySelectorAll('table tr, dl > div, dl tr, [class*="spec-row"]');
+    const specRows = doc.querySelectorAll('table tr, dl > div, dl tr, [class*="spec-row"], [class*="vehicle-details__list"] tr');
     specRows.forEach(row => {
       const labelEl = row.querySelector('td:first-child, th, dt, [class*="label"], [class*="name"]');
       const valEl = row.querySelector('td:last-child, dd, [class*="value"]');
@@ -401,7 +419,7 @@ const CarsCoZaAdapter = {
     if (!bodyColor) {
       bodyColor = getSelectorText(doc, ['[data-test="colour"]', '[data-testid="colour"]', '[data-test="color"]', '[data-testid="color"]', '#spec-colour', '.spec-colour']);
     }
-    if (bodyColor && (bodyColor.toLowerCase() === titleDescription.toLowerCase() || bodyColor.toLowerCase() === title.toLowerCase() || /^(gtb|ferrari|mazda|automatic|manual|petrol|diesel|4x2|4x4|\d+)$/i.test(bodyColor))) {
+    if (bodyColor && (/\d|\b(reviews?|ratings?|gtb|ferrari|mazda|auto|petrol|diesel)\b/i.test(bodyColor) || bodyColor.length > 25)) {
       bodyColor = '';
     }
 
@@ -435,15 +453,23 @@ const CarsCoZaAdapter = {
     // --- 10 & 16. PRICING & PRICING SUMMARY (Strict Pricing Section Scoping) ---
     const pricingContainer = findSectionContainer(['Pricing Summary', 'Pricing', 'Price Summary', 'Finance Summary'], [
       '[data-test="pricing-summary-container"]', '[data-testid="pricing-summary-container"]',
-      '.pricing-summary', '.price-section', '[class*="pricing-summary"]'
+      '.pricing-card', '.pricing-summary', '.price-section', '[class*="pricing-summary"]'
     ]);
 
     let rawPrice = '';
+    let installmentText = '';
+
     if (pricingContainer) {
-      rawPrice = getSelectorText(pricingContainer, ['[data-test="price"]', '[data-testid="price"]', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price', 'h1', 'h2', 'span']);
+      rawPrice = getSelectorText(pricingContainer, ['[data-test="price"]', '[data-testid="price"]', '.price-cash', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
+      installmentText = getSelectorText(pricingContainer, [
+        '[data-test="est-installment"]', '[data-testid="est-installment"]',
+        '[data-test="installment"]', '[data-testid="installment"]',
+        '.price-installment', '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
+      ]);
     }
+
     if (!rawPrice) {
-      rawPrice = getSelectorText(doc, ['[data-test="price"]', '[data-testid="price"]', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
+      rawPrice = getSelectorText(doc, ['[data-test="price"]', '[data-testid="price"]', '.price-cash', '.price-amount', '#car-price', '.heading-lg.price', 'h2.price', 'span.price']);
     }
     if (!rawPrice) {
       rawPrice = nextDataProps.price || (jsonLdData.offers?.price ? String(jsonLdData.offers.price) : '') || getMeta(['product:price:amount', 'og:price:amount']);
@@ -452,27 +478,18 @@ const CarsCoZaAdapter = {
     let priceDigits = String(rawPrice).replace(/[^\d]/g, '');
     let formattedPrice = priceDigits ? Number(priceDigits).toLocaleString('fr-FR').replace(/\s/g, ' ') : '';
 
-    let installmentText = '';
-    if (pricingContainer) {
-      installmentText = getSelectorText(pricingContainer, [
-        '[data-test="est-installment"]', '[data-testid="est-installment"]',
-        '[data-test="installment"]', '[data-testid="installment"]',
-        '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
-      ]);
-    }
     if (!installmentText) {
       installmentText = getSelectorText(doc, [
         '[data-test="est-installment"]', '[data-testid="est-installment"]',
         '[data-test="installment"]', '[data-testid="installment"]',
-        '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
+        '.price-installment', '.est-payment', '.finance-est', '.monthly-installment', '[class*="installment"]'
       ]);
     }
     if (!installmentText && nextDataProps.installment) {
       installmentText = `Est. ${nextDataProps.installment}`;
     }
-    if (!installmentText) {
-      const priceBlock = pricingContainer || doc.querySelector('[class*="pricing"], [class*="price"], [class*="finance"]') || doc.body;
-      const match = (priceBlock.textContent || '').match(/(?:Est\.\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i);
+    if (!installmentText && pricingContainer) {
+      const match = (pricingContainer.textContent || '').match(/(?:Est\.\s*)?R\s*[\d\s,.]+\s*(?:p\/m|pm|per month)/i);
       if (match) {
         installmentText = match[0].trim();
         if (!installmentText.toLowerCase().startsWith('est.')) {
@@ -481,12 +498,12 @@ const CarsCoZaAdapter = {
       }
     }
 
-    let pricingSummary = nextDataProps.pricingSummary || '';
-    if (!pricingSummary && pricingContainer) {
+    let pricingSummary = '';
+    if (pricingContainer) {
       pricingSummary = getSelectorText(pricingContainer, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary']);
     }
     if (!pricingSummary) {
-      pricingSummary = getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary', '[class*="pricing-summary"]']);
+      pricingSummary = nextDataProps.pricingSummary || getSelectorText(doc, ['[data-test="pricing-summary"]', '[data-testid="pricing-summary"]', '#car-price-summary', '.price-summary', '[class*="pricing-summary"]']);
     }
 
     if (!pricingSummary && formattedPrice) {
@@ -501,12 +518,12 @@ const CarsCoZaAdapter = {
     const dealerContainer = findSectionContainer(['Seller Details', 'Dealer Details', 'Seller Information', 'Dealer Information', 'Dealership'], [
       '[data-test="dealer-card"]', '[data-testid="dealer-card"]',
       '[data-test="seller-info"]', '[data-testid="seller-info"]',
-      '.seller-info', '.dealer-info', '.dealer-card', 'aside[class*="dealer"]', 'div[class*="dealer"]'
+      '.dealer-card', '.seller-info', '.dealer-info', 'aside[class*="dealer"]', 'div[class*="dealer"]'
     ]);
 
     let dealerName = '';
     if (dealerContainer) {
-      dealerName = getSelectorText(dealerContainer, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', 'a[href*="/dealers/"]', '.seller-info__title', '.dealer-title', 'h2', 'h3', 'h4', 'strong']);
+      dealerName = getSelectorText(dealerContainer, ['[data-test="dealer-name"]', '[data-testid="dealer-name"]', '.dealer-name', 'a[href*="/dealers/"]', '.seller-info__title', '.dealer-title', 'h2', 'h3', 'h4', 'strong']);
     }
     if (!dealerName) {
       dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
@@ -517,7 +534,7 @@ const CarsCoZaAdapter = {
 
     let dealerAddress = '';
     if (dealerContainer) {
-      dealerAddress = getSelectorText(dealerContainer, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.seller-info__address', '.dealer-address', '.dealer-location', 'p', 'span']);
+      dealerAddress = getSelectorText(dealerContainer, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.dealer-address', '.seller-info__address', '.dealer-location', 'p', 'span']);
     }
     if (!dealerAddress) {
       dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
@@ -526,20 +543,28 @@ const CarsCoZaAdapter = {
       dealerAddress = getSelectorText(doc, ['[data-test="location"]', '[data-testid="location"]', '[data-test="dealer-address"]', '#car-location', '.location-text', '.vehicle-location']);
     }
 
-    const ratingContainer = findSectionContainer(['Reviews', 'Google Reviews', 'Dealer Rating', 'Rating'], [
-      '[data-test="dealer-rating"]', '[data-testid="dealer-rating"]',
-      '[data-test="rating-card"]', '[data-testid="rating-card"]',
-      '.rating-badge', '.seller-rating', '.dealer-rating', '.google-rating'
-    ]);
-
     let averageRating = '';
-    const ratingTargetEl = ratingContainer || dealerContainer;
-    if (ratingTargetEl) {
-      const match = (ratingTargetEl.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
+    if (dealerContainer) {
+      const match = (dealerContainer.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
       if (match) {
         const score = match[1];
         const count = match[2] || match[3] || '';
         averageRating = count ? `${score} (${count} Reviews)` : score;
+      }
+    }
+    if (!averageRating) {
+      const ratingContainer = findSectionContainer(['Reviews', 'Google Reviews', 'Dealer Rating', 'Rating'], [
+        '[data-test="dealer-rating"]', '[data-testid="dealer-rating"]',
+        '[data-test="rating-card"]', '[data-testid="rating-card"]',
+        '.rating-badge', '.rating-box', '.seller-rating', '.dealer-rating', '.google-rating'
+      ]);
+      if (ratingContainer) {
+        const match = (ratingContainer.textContent || '').match(/([1-5](?:\.\d)?)\s*(?:\/5)?\s*(?:\(\s*(\d+)\s*(?:Reviews?|reviews?)?\s*\)|(\d+)\s*(?:Reviews?|reviews?))/i);
+        if (match) {
+          const score = match[1];
+          const count = match[2] || match[3] || '';
+          averageRating = count ? `${score} (${count} Reviews)` : score;
+        }
       }
     }
     if (!averageRating) {
@@ -564,15 +589,17 @@ const CarsCoZaAdapter = {
     if (!featuresList || featuresList.length === 0) {
       const featuresContainer = findSectionContainer(['Features', 'Key Features', 'Vehicle Features', 'Standard Features', 'Optional Features', 'Equipment', 'Specification'], [
         '[data-test="features"]', '[data-testid="features"]',
-        '#car-features', '.features-list', '.equipment-list', 'section[class*="features"]', 'div[class*="features"]'
+        '#car-features', '.features-grid', '.features-list', '.equipment-list', 'section[class*="features"]', 'div[class*="features"]'
       ]);
       if (featuresContainer) {
-        const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], p');
+        const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], div, p');
         const items = [];
         itemEls.forEach(el => {
-          const txt = (el.textContent || '').trim();
-          if (txt && txt.length > 1 && txt.length < 100 && !/^(features|key features|show more|view all|read more)$/i.test(txt)) {
-            if (!items.includes(txt)) items.push(txt);
+          if (el.children.length <= 1) {
+            const txt = (el.textContent || '').trim();
+            if (txt && txt.length > 1 && txt.length < 80 && !/^(features|key features|show more|view all|read more|back to search|used cars)$/i.test(txt)) {
+              if (!items.includes(txt)) items.push(txt);
+            }
           }
         });
         if (items.length > 0) featuresList = items;
@@ -583,7 +610,7 @@ const CarsCoZaAdapter = {
     let description = '';
     const descContainer = findSectionContainer(['Description', 'Seller Description', 'Dealer Description', 'Seller Comments', 'Dealer Comments', 'Vehicle Overview'], [
       '[data-test="description"]', '[data-testid="description"]',
-      '#car-description', '.vehicle-description', '.description-text', 'section[class*="description"]', 'div[class*="description"]'
+      '#car-description', '.description-content', '.vehicle-description', '.description-text', 'section[class*="description"]', 'div[class*="description"]'
     ]);
     if (descContainer) {
       const contentEl = descContainer.querySelector('p, [class*="content"], [class*="body"], [class*="text"]') || descContainer;
