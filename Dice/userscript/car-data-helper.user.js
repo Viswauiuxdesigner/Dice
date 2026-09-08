@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.8
+// @version      2.0.9
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.0.8';
+  const SCRIPT_VERSION = '2.0.9';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -614,8 +614,77 @@
           if (items.length > 0) featuresList = items;
         }
       }
-       // --- 15. DESCRIPTION (Multi-Strategy Scoped Extractor with Show More Clicker) ---
+      // --- 15. DESCRIPTION (CSS-Safe Multi-Strategy Scoped Extractor with Show More Clicker) ---
       let description = '';
+
+      // Guard: Check if a string contains CSS / style / syntax junk
+      const hasCssArtifacts = (str) => {
+        if (!str || typeof str !== 'string') return false;
+        return /[{}\[\]]|font-size:|var\(--|@media|\.__m__|line-height:|color:|margin:|padding:|<style|\.className_|text-transform:|background-color:/i.test(str);
+      };
+
+      // Helper: Safely extract human-readable text from a container, stripping style/script/svg/buttons
+      const extractPureDescriptionText = (container) => {
+        if (!container) return '';
+        let clone;
+        try {
+          clone = container.cloneNode(true);
+        } catch (e) {
+          clone = container;
+        }
+
+        if (clone.querySelectorAll) {
+          // 1. Remove all non-content and styling elements completely
+          const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, nav, header, footer, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
+          junk.forEach(el => el.remove());
+
+          // 2. Remove any Show More / Read More anchors or spans
+          const moreControls = clone.querySelectorAll('a, span, div, p');
+          moreControls.forEach(el => {
+            const txt = (el.textContent || '').trim();
+            if (/^(?:show\s*more|read\s*more|view\s*more|show\s*less|read\s*less|expand|\.\.\.\s*more)$/i.test(txt)) {
+              el.remove();
+            }
+          });
+
+          // 3. Extract text from paragraph or text-block elements first
+          const pElements = Array.from(clone.querySelectorAll('p, [class*="paragraph"], [class*="text-"]'));
+          const validParagraphs = pElements
+            .map(p => (p.textContent || '').replace(/\s+/g, ' ').trim())
+            .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+          if (validParagraphs.length > 0) {
+            const combined = validParagraphs.join('\n\n');
+            if (!hasCssArtifacts(combined) && combined.length > 15) {
+              return combined;
+            }
+          }
+        }
+
+        // 4. Safe Text-Node recursive walker
+        const collected = [];
+        const walk = (node) => {
+          if (!node) return;
+          if (node.nodeType === 3) { // TEXT_NODE
+            const val = (node.nodeValue || '').trim();
+            if (val && !hasCssArtifacts(val) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(val) && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(val)) {
+              collected.push(val);
+            }
+          } else if (node.nodeType === 1) { // ELEMENT_NODE
+            const tag = (node.tagName || '').toLowerCase();
+            if (tag === 'style' || tag === 'script' || tag === 'noscript' || tag === 'svg' || tag === 'button' || tag === 'nav' || tag === 'header' || tag === 'footer') {
+              return;
+            }
+            for (let child = node.firstChild; child; child = child.nextSibling) {
+              walk(child);
+            }
+          }
+        };
+        walk(clone);
+
+        const result = collected.join(' ').replace(/\s+/g, ' ').trim();
+        return hasCssArtifacts(result) ? '' : result;
+      };
 
       // Step A: Locate Description Heading Element
       const descHeadingCandidates = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b, button, summary, p, div, span'));
@@ -632,8 +701,8 @@
           next = descHeading.parentElement.nextElementSibling;
         }
         while (next && !descBodyContainer) {
-          const text = (next.textContent || '').trim();
-          if (text.length > 20 && !text.toLowerCase().includes('back to search')) {
+          const text = extractPureDescriptionText(next);
+          if (text.length > 20 && !text.toLowerCase().includes('back to search') && !hasCssArtifacts(text)) {
             descBodyContainer = next;
             break;
           }
@@ -663,18 +732,8 @@
           }
         }
 
-        // Step D: Extract text from paragraphs or text container
-        const pElements = Array.from(descBodyContainer.querySelectorAll('p, [class*="paragraph"], [class*="text-"]'));
-        const validParagraphs = pElements
-          .map(p => (p.textContent || '').trim())
-          .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+)?description:?$/i.test(p) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(p));
-
-        if (validParagraphs.length > 0) {
-          description = validParagraphs.join('\n\n');
-        } else {
-          const contentEl = descBodyContainer.querySelector('[class*="content"], [class*="text"], [class*="body"]') || descBodyContainer;
-          description = (contentEl.textContent || '').trim();
-        }
+        // Step D: Extract pure text from container
+        description = extractPureDescriptionText(descBodyContainer);
       }
 
       // Step E: Clean and sanitize description string
@@ -685,16 +744,19 @@
           .replace(/^(?:Show|Read|View)\s*(?:more|less)\s*/i, '')
           .trim();
 
-        if (description.toLowerCase().includes('back to search') || description.length < 20) {
+        if (description.toLowerCase().includes('back to search') || description.length < 20 || hasCssArtifacts(description)) {
           description = '';
         }
       }
 
       // Step F: Next.js Dehydrated State / JSON-LD Fallback (contains 100% complete seller description)
       if (!description) {
-        description = nextDataProps.description || nextDataProps.sellerComments || nextDataProps.dealerComments || nextDataProps.comments || '';
+        const stateDesc = nextDataProps.description || nextDataProps.sellerComments || nextDataProps.dealerComments || nextDataProps.comments || '';
+        if (stateDesc && !hasCssArtifacts(stateDesc)) {
+          description = stateDesc.trim();
+        }
       }
-      if (!description && jsonLdData.description && jsonLdData.description.length > 40) {
+      if (!description && jsonLdData.description && jsonLdData.description.length > 40 && !hasCssArtifacts(jsonLdData.description)) {
         description = jsonLdData.description.trim();
       }
 
