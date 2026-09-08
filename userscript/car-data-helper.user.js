@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.7
+// @version      2.0.8
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.0.7';
+  const SCRIPT_VERSION = '2.0.8';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -615,39 +615,70 @@
         }
       }
 
-      // --- 15. DESCRIPTION (with Show More expansion) ---
+      // --- 15. DESCRIPTION (Multi-Strategy Scoped Extractor with Show More Clicker) ---
       let description = '';
-      let descContainer = doc.querySelector('[data-test="description"], [data-testid="description"], #car-description, .description-content, .vehicle-description, .description-text, [class*="description-section"], [class*="description-content"], section[class*="description"]');
 
-      if (!descContainer) {
-        const descHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b, button, summary')).find(el => /^(?:Seller\s+|Dealer\s+|Vehicle\s+)?(?:Description|Comments|Overview)$/i.test(el.textContent.trim()));
-        if (descHeading) {
-          descContainer = descHeading.closest('section, article, div[class*="description"], div[class*="card"], div') || descHeading.parentElement;
+      // Step A: Locate Description Heading Element
+      const descHeadingCandidates = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], strong, b, button, summary, p, div, span'));
+      const descHeading = descHeadingCandidates.find(el => {
+        const t = (el.textContent || '').trim();
+        return /^(?:Seller\s+|Dealer\s+|Vehicle\s+)?Description:?$/i.test(t) && t.length < 30;
+      });
+
+      let descBodyContainer = null;
+
+      if (descHeading) {
+        let next = descHeading.nextElementSibling;
+        if (!next && descHeading.parentElement && descHeading.parentElement !== doc.body) {
+          next = descHeading.parentElement.nextElementSibling;
+        }
+        while (next && !descBodyContainer) {
+          const text = (next.textContent || '').trim();
+          if (text.length > 20 && !text.toLowerCase().includes('back to search')) {
+            descBodyContainer = next;
+            break;
+          }
+          next = next.nextElementSibling;
+        }
+        if (!descBodyContainer) {
+          descBodyContainer = descHeading.closest('section, article, [class*="description"], [class*="card"], [class*="detail"]');
         }
       }
 
-      if (descContainer) {
-        // Programmatically trigger Show More if present
-        const expandBtns = descContainer.querySelectorAll('button, a, [role="button"], span, div');
+      // Step B: Direct selector lookup for container if not found via heading
+      if (!descBodyContainer) {
+        descBodyContainer = doc.querySelector('[data-test="description"], [data-testid="description"], #car-description, #description, .description-content, .vehicle-description, .description-text, [class*="description-section"], [class*="description-content"], section[class*="description"]');
+      }
+
+      // Step C: Trigger "Show More" / "Read More" button if present
+      if (descBodyContainer) {
+        const expandBtns = descBodyContainer.querySelectorAll('button, a, [role="button"], span, div');
         for (const btn of expandBtns) {
           const btnTxt = (btn.textContent || '').trim();
           if (/^(?:show\s*more|read\s*more|view\s*more|expand|\.\.\.\s*more)$/i.test(btnTxt)) {
             try {
               btn.click();
+              btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
             } catch (e) {}
             break;
           }
         }
 
-        const paragraphs = Array.from(descContainer.querySelectorAll('p')).map(p => (p.textContent || '').trim()).filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+)?description$/i.test(p) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(p));
-        if (paragraphs.length > 0) {
-          description = paragraphs.join('\n\n');
+        // Step D: Extract text from paragraphs or text container
+        const pElements = Array.from(descBodyContainer.querySelectorAll('p, [class*="paragraph"], [class*="text-"]'));
+        const validParagraphs = pElements
+          .map(p => (p.textContent || '').trim())
+          .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+)?description:?$/i.test(p) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(p));
+
+        if (validParagraphs.length > 0) {
+          description = validParagraphs.join('\n\n');
         } else {
-          const contentEl = descContainer.querySelector('[class*="content"], [class*="text"], [class*="body"]') || descContainer;
+          const contentEl = descBodyContainer.querySelector('[class*="content"], [class*="text"], [class*="body"]') || descBodyContainer;
           description = (contentEl.textContent || '').trim();
         }
       }
 
+      // Step E: Clean and sanitize description string
       if (description) {
         description = description
           .replace(/^(?:Seller\s+|Dealer\s+|Vehicle\s+)?Description\s*:?\s*/i, '')
@@ -660,10 +691,11 @@
         }
       }
 
+      // Step F: Next.js Dehydrated State / JSON-LD Fallback (contains 100% complete seller description)
       if (!description) {
-        description = nextDataProps.description || '';
+        description = nextDataProps.description || nextDataProps.sellerComments || nextDataProps.dealerComments || nextDataProps.comments || '';
       }
-      if (!description && jsonLdData.description && jsonLdData.description.length > 60) {
+      if (!description && jsonLdData.description && jsonLdData.description.length > 40) {
         description = jsonLdData.description.trim();
       }
 
