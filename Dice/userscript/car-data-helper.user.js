@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.1.0
-// @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
+// @version      2.2.0
+// @description  Local car data extraction helper for Cars.co.za listings (18 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
 // @match        *://*/*cars-co-za-sample.html*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.1.0';
+  const SCRIPT_VERSION = '2.2.0';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -104,6 +104,43 @@
       }
 
       return cleanParagraphs.join('\n\n');
+    },
+    normalizeVehicleHighlights(val) {
+      if (!val) return '';
+      if (Array.isArray(val)) {
+        return val.map(item => {
+          if (typeof item === 'string') return this.cleanText(item);
+          if (typeof item === 'object' && item !== null) {
+            const t = item.title || item.heading || item.name || '';
+            const v = item.value || item.metric || item.stat || '';
+            const d = item.description || item.desc || item.detail || item.text || '';
+            return [t, v, d].filter(Boolean).map(s => this.cleanText(s)).join('\n');
+          }
+          return '';
+        }).filter(Boolean).join('\n\n');
+      }
+      if (typeof val === 'string') {
+        const text = val
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n');
+
+        const rawCards = text.split(/\n{2,}/);
+        const cleanCards = [];
+
+        for (const rawCard of rawCards) {
+          const lines = rawCard
+            .split('\n')
+            .map(l => l.replace(/[ \t]+/g, ' ').trim())
+            .filter(l => l.length > 0 && !/^(?:vehicle\s+)?highlights$/i.test(l));
+
+          if (lines.length > 0) {
+            cleanCards.push(lines.join('\n'));
+          }
+        }
+        return cleanCards.join('\n\n');
+      }
+      return '';
     }
   };
 
@@ -800,6 +837,99 @@
         description = Normalizers.normalizeDescription(description);
       }
 
+      // --- 16. VEHICLE HIGHLIGHTS (Dynamic multi-card extractor) ---
+      let vehicleHighlights = '';
+
+      let highlightsContainer = null;
+      const highlightHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"]')).find(el => {
+        const t = (el.textContent || '').trim();
+        return /^(?:Vehicle\s+)?Highlights$/i.test(t) && t.length < 30;
+      });
+
+      if (highlightHeading) {
+        highlightsContainer = highlightHeading.closest('section, article, div[class*="highlights"], div[class*="container"]') || highlightHeading.parentElement;
+      }
+      if (!highlightsContainer) {
+        highlightsContainer = doc.querySelector('[data-test="vehicle-highlights"], [data-testid="vehicle-highlights"], [data-test="highlights"], [data-testid="highlights"], #vehicle-highlights, .vehicle-highlights, .highlights-section');
+      }
+
+      if (highlightsContainer) {
+        let cardEls = Array.from(highlightsContainer.querySelectorAll('[data-test*="highlight-card"], [data-testid*="highlight-card"], [class*="highlight-card"], [class*="highlight-item"], [class*="card"], [class*="grid"] > div, [class*="flex"] > div, article, li'));
+        
+        if (cardEls.length === 0) {
+          const contentWrapper = highlightsContainer.querySelector('[class*="content"], [class*="grid"], [class*="list"], [class*="items"], [class*="cards"]') || highlightsContainer;
+          cardEls = Array.from(contentWrapper.children).filter(el => el !== highlightHeading && !/^(?:Vehicle\s+)?Highlights$/i.test((el.textContent || '').trim()));
+        }
+
+        const cards = [];
+        const processedTexts = new Set();
+
+        cardEls.forEach(cardEl => {
+          if (cardEl === highlightHeading || cardEl.contains(highlightHeading)) return;
+          
+          let clone;
+          try { clone = cardEl.cloneNode(true); } catch (e) { clone = cardEl; }
+          if (clone.querySelectorAll) {
+            const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
+            junk.forEach(j => j.remove());
+          }
+
+          clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+          const lines = (clone.textContent || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .split('\n')
+            .map(l => l.replace(/[ \t]+/g, ' ').trim())
+            .filter(l => l.length > 0 && !/^(?:vehicle\s+)?highlights$/i.test(l) && !hasCssArtifacts(l));
+
+          if (lines.length > 0) {
+            const cardText = lines.join('\n');
+            if (!processedTexts.has(cardText) && lines.length <= 6 && cardText.length > 3) {
+              const isSub = cards.some(c => c.includes(cardText));
+              const isSuper = cards.some((c, idx) => {
+                if (cardText.includes(c)) {
+                  cards[idx] = cardText;
+                  return true;
+                }
+                return false;
+              });
+              if (!isSub && !isSuper) {
+                cards.push(cardText);
+                processedTexts.add(cardText);
+              }
+            }
+          }
+        });
+
+        if (cards.length > 0) {
+          vehicleHighlights = cards.join('\n\n');
+        }
+      }
+
+      // Fallback: Next.js Dehydrated State
+      if (!vehicleHighlights && nextDataProps) {
+        const rawHL = nextDataProps.highlights || nextDataProps.vehicleHighlights || nextDataProps.keyHighlights;
+        if (Array.isArray(rawHL) && rawHL.length > 0) {
+          const stateCards = rawHL.map(item => {
+            if (typeof item === 'string') return item.trim();
+            if (typeof item === 'object' && item !== null) {
+              const title = item.title || item.heading || item.name || item.label || '';
+              const val = item.value || item.metric || item.stat || item.figure || '';
+              const desc = item.description || item.desc || item.detail || item.text || item.summary || '';
+              return [title, val, desc].filter(Boolean).map(s => String(s).trim()).join('\n');
+            }
+            return '';
+          }).filter(Boolean);
+          if (stateCards.length > 0) {
+            vehicleHighlights = stateCards.join('\n\n');
+          }
+        }
+      }
+
+      if (vehicleHighlights) {
+        vehicleHighlights = Normalizers.normalizeVehicleHighlights(vehicleHighlights);
+      }
+
       // --- 17. SOURCE URL ---
       const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                         doc.querySelector('#source-url-meta')?.getAttribute('href') ||
@@ -822,13 +952,14 @@
         averageRating,
         features: featuresList,
         description,
+        vehicleHighlights,
         price: formattedPrice || rawPrice,
         sourceUrl
       };
     }
   };
 
-  // --- 4. FLOATING UI PANEL CONTROLLER (17 Fields with Individual COPY buttons) ---
+  // --- 4. FLOATING UI PANEL CONTROLLER (18 Fields with Individual COPY buttons) ---
   const FIELD_DEFINITIONS = [
     { key: 'title', label: 'Title' },
     { key: 'titleDescription', label: 'Title Description' },
@@ -845,6 +976,7 @@
     { key: 'averageRating', label: 'Average Rating' },
     { key: 'features', label: 'Features (Newline-separated)' },
     { key: 'description', label: 'Description' },
+    { key: 'vehicleHighlights', label: 'Vehicle Highlights' },
     { key: 'price', label: 'Price' },
     { key: 'sourceUrl', label: 'Source URL' }
   ];
@@ -869,6 +1001,7 @@
       averageRating: norm.cleanText(raw.averageRating),
       features: norm.normalizeFeatures(raw.features),
       description: norm.normalizeDescription(raw.description),
+      vehicleHighlights: norm.normalizeVehicleHighlights(raw.vehicleHighlights),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || window.location.href
     };
@@ -1090,8 +1223,8 @@
       });
 
       if (countEl) {
-        countEl.textContent = `Extracted ${extractedCount} of 17 fields`;
-        countEl.style.color = extractedCount >= 14 ? '#16a34a' : (extractedCount >= 8 ? '#d97706' : '#dc2626');
+        countEl.textContent = `Extracted ${extractedCount} of 18 fields`;
+        countEl.style.color = extractedCount >= 15 ? '#16a34a' : (extractedCount >= 9 ? '#d97706' : '#dc2626');
         countEl.style.fontWeight = '700';
       }
     }, 100);

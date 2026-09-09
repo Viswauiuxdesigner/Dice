@@ -679,6 +679,103 @@ const CarsCoZaAdapter = {
       }
     }
 
+    // --- 16. VEHICLE HIGHLIGHTS (Dynamic multi-card extractor) ---
+    let vehicleHighlights = '';
+
+    let highlightsContainer = null;
+    const highlightHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"]')).find(el => {
+      const t = (el.textContent || '').trim();
+      return /^(?:Vehicle\s+)?Highlights$/i.test(t) && t.length < 30;
+    });
+
+    if (highlightHeading) {
+      highlightsContainer = highlightHeading.closest('section, article, div[class*="highlights"], div[class*="container"]') || highlightHeading.parentElement;
+    }
+    if (!highlightsContainer) {
+      highlightsContainer = doc.querySelector('[data-test="vehicle-highlights"], [data-testid="vehicle-highlights"], [data-test="highlights"], [data-testid="highlights"], #vehicle-highlights, .vehicle-highlights, .highlights-section');
+    }
+
+    if (highlightsContainer) {
+      let cardEls = Array.from(highlightsContainer.querySelectorAll('[data-test*="highlight-card"], [data-testid*="highlight-card"], [class*="highlight-card"], [class*="highlight-item"], [class*="card"], [class*="grid"] > div, [class*="flex"] > div, article, li'));
+      
+      if (cardEls.length === 0) {
+        const contentWrapper = highlightsContainer.querySelector('[class*="content"], [class*="grid"], [class*="list"], [class*="items"], [class*="cards"]') || highlightsContainer;
+        cardEls = Array.from(contentWrapper.children).filter(el => el !== highlightHeading && !/^(?:Vehicle\s+)?Highlights$/i.test((el.textContent || '').trim()));
+      }
+
+      const cards = [];
+      const processedTexts = new Set();
+
+      cardEls.forEach(cardEl => {
+        if (cardEl === highlightHeading || cardEl.contains(highlightHeading)) return;
+        
+        let clone;
+        try { clone = cardEl.cloneNode(true); } catch (e) { clone = cardEl; }
+        if (clone.querySelectorAll) {
+          const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
+          junk.forEach(j => j.remove());
+        }
+
+        clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+        const lines = (clone.textContent || '')
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .split('\n')
+          .map(l => l.replace(/[ \t]+/g, ' ').trim())
+          .filter(l => l.length > 0 && !/^(?:vehicle\s+)?highlights$/i.test(l) && !hasCssArtifacts(l));
+
+        if (lines.length > 0) {
+          const cardText = lines.join('\n');
+          if (!processedTexts.has(cardText) && lines.length <= 6 && cardText.length > 3) {
+            const isSub = cards.some(c => c.includes(cardText));
+            const isSuper = cards.some((c, idx) => {
+              if (cardText.includes(c)) {
+                cards[idx] = cardText;
+                return true;
+              }
+              return false;
+            });
+            if (!isSub && !isSuper) {
+              cards.push(cardText);
+              processedTexts.add(cardText);
+            }
+          }
+        }
+      });
+
+      if (cards.length > 0) {
+        vehicleHighlights = cards.join('\n\n');
+      }
+    }
+
+    // Fallback: Next.js Dehydrated State
+    if (!vehicleHighlights && nextDataProps) {
+      const rawHL = nextDataProps.highlights || nextDataProps.vehicleHighlights || nextDataProps.keyHighlights;
+      if (Array.isArray(rawHL) && rawHL.length > 0) {
+        const stateCards = rawHL.map(item => {
+          if (typeof item === 'string') return item.trim();
+          if (typeof item === 'object' && item !== null) {
+            const title = item.title || item.heading || item.name || item.label || '';
+            const val = item.value || item.metric || item.stat || item.figure || '';
+            const desc = item.description || item.desc || item.detail || item.text || item.summary || '';
+            return [title, val, desc].filter(Boolean).map(s => String(s).trim()).join('\n');
+          }
+          return '';
+        }).filter(Boolean);
+        if (stateCards.length > 0) {
+          vehicleHighlights = stateCards.join('\n\n');
+        }
+      }
+    }
+
+    if (vehicleHighlights) {
+      if (window.CarNormalizers && window.CarNormalizers.normalizeVehicleHighlights) {
+        vehicleHighlights = window.CarNormalizers.normalizeVehicleHighlights(vehicleHighlights);
+      } else if (typeof Normalizers !== 'undefined' && Normalizers.normalizeVehicleHighlights) {
+        vehicleHighlights = Normalizers.normalizeVehicleHighlights(vehicleHighlights);
+      }
+    }
+
     // --- 17. SOURCE URL ---
     const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                       doc.querySelector('#source-url-meta')?.getAttribute('href') ||
@@ -701,6 +798,7 @@ const CarsCoZaAdapter = {
       averageRating,
       features: featuresList,
       description,
+      vehicleHighlights,
       price: formattedPrice || rawPrice,
       sourceUrl
     };
@@ -731,6 +829,7 @@ window.CarSourceExtractor = {
       averageRating: norm.cleanText(raw.averageRating),
       features: norm.normalizeFeatures(raw.features),
       description: norm.normalizeDescription(raw.description),
+      vehicleHighlights: norm.normalizeVehicleHighlights ? norm.normalizeVehicleHighlights(raw.vehicleHighlights) : (raw.vehicleHighlights || ''),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || doc.location?.href || ''
     };

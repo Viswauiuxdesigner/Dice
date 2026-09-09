@@ -124,5 +124,46 @@ window.CarNormalizers = {
     }
 
     return cleanParagraphs.join('\n\n');
+  },
+
+  /**
+   * Normalize Vehicle Highlights multi-card text (cards separated by \n\n, fields within card by \n)
+   */
+  normalizeVehicleHighlights(val) {
+    if (!val) return '';
+    if (Array.isArray(val)) {
+      return val.map(item => {
+        if (typeof item === 'string') return this.cleanText(item);
+        if (typeof item === 'object' && item !== null) {
+          const t = item.title || item.heading || item.name || '';
+          const v = item.value || item.metric || item.stat || '';
+          const d = item.description || item.desc || item.detail || item.text || '';
+          return [t, v, d].filter(Boolean).map(s => this.cleanText(s)).join('\n');
+        }
+        return '';
+      }).filter(Boolean).join('\n\n');
+    }
+    if (typeof val === 'string') {
+      const text = val
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+
+      const rawCards = text.split(/\n{2,}/);
+      const cleanCards = [];
+
+      for (const rawCard of rawCards) {
+        const lines = rawCard
+          .split('\n')
+          .map(l => l.replace(/[ \t]+/g, ' ').trim())
+          .filter(l => l.length > 0 && !/^(?:vehicle\s+)?highlights$/i.test(l));
+
+        if (lines.length > 0) {
+          cleanCards.push(lines.join('\n'));
+        }
+      }
+      return cleanCards.join('\n\n');
+    }
+    return '';
   }
 };
