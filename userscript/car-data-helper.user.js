@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.0.9
+// @version      2.1.0
 // @description  Local car data extraction helper for Cars.co.za listings (17 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.0.9';
+  const SCRIPT_VERSION = '2.1.0';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -60,14 +60,14 @@
       const str = String(val).toLowerCase();
       if (str.includes('petrol') || str.includes('gasoline')) return 'Petrol';
       if (str.includes('diesel')) return 'Diesel';
-      if (str.includes('hybrid') || str.includes('phev')) return 'Hybrid';
+      if (str.includes('hybrid')) return 'Hybrid';
       if (str.includes('electric') || str.includes('ev')) return 'Electric';
       return this.cleanText(val);
     },
     normalize4x2Or4x4(val) {
       if (!val) return '';
       const str = String(val).toLowerCase();
-      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel') || str.includes('four-wheel')) return '4x4';
+      if (str.includes('4x4') || str.includes('4wd') || str.includes('awd') || str.includes('all-wheel')) return '4x4';
       if (str.includes('4x2') || str.includes('fwd') || str.includes('rwd') || str.includes('front') || str.includes('rear') || str.includes('two-wheel')) return '4x2';
       return this.cleanText(val);
     },
@@ -80,6 +80,30 @@
         return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
       }
       return '';
+    },
+    normalizeDescription(val) {
+      if (!val || typeof val !== 'string') return '';
+      let text = val
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+
+      const rawParagraphs = text.split(/\n{2,}/);
+      const cleanParagraphs = [];
+
+      for (const rawP of rawParagraphs) {
+        const cleanP = rawP
+          .split('\n')
+          .map(line => line.replace(/[ \t]+/g, ' ').trim())
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        if (cleanP && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(cleanP) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(cleanP)) {
+          cleanParagraphs.push(cleanP);
+        }
+      }
+
+      return cleanParagraphs.join('\n\n');
     }
   };
 
@@ -624,7 +648,7 @@
         return /[{}\[\]]|font-size:|var\(--|@media|\.__m__|line-height:|color:|margin:|padding:|<style|\.className_|text-transform:|background-color:/i.test(str);
       };
 
-      // Helper: Safely extract human-readable text from a container, stripping style/script/svg/buttons
+      // Helper: Safely extract human-readable text from a container, stripping style/script/svg/buttons and preserving paragraphs
       const extractPureDescriptionText = (container) => {
         if (!container) return '';
         let clone;
@@ -635,7 +659,7 @@
         }
 
         if (clone.querySelectorAll) {
-          // 1. Remove all non-content and styling elements completely
+          // 1. Remove all non-content, styling, script and hidden elements completely
           const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, nav, header, footer, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
           junk.forEach(el => el.remove());
 
@@ -648,43 +672,53 @@
             }
           });
 
-          // 3. Extract text from paragraph or text-block elements first
-          const pElements = Array.from(clone.querySelectorAll('p, [class*="paragraph"], [class*="text-"]'));
-          const validParagraphs = pElements
-            .map(p => (p.textContent || '').replace(/\s+/g, ' ').trim())
-            .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+          // 3. Replace <br> tags with \n
+          clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
 
-          if (validParagraphs.length > 0) {
-            const combined = validParagraphs.join('\n\n');
-            if (!hasCssArtifacts(combined) && combined.length > 15) {
-              return combined;
+          // 4. Strategy A: Extract from explicit <p> paragraph elements
+          const pElements = Array.from(clone.querySelectorAll('p'));
+          if (pElements.length > 0) {
+            const validParagraphs = pElements
+              .map(p => (p.textContent || '').replace(/\r\n/g, '\n').split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+              .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+            if (validParagraphs.length > 0) {
+              const combined = validParagraphs.join('\n\n');
+              if (!hasCssArtifacts(combined) && combined.length > 15) {
+                return combined;
+              }
+            }
+          }
+
+          // 5. Strategy B: Check if there are multiple child block elements (div, section, article, li)
+          const childBlocks = Array.from(clone.children).filter(el => /^(DIV|SECTION|ARTICLE|LI)$/i.test(el.tagName));
+          if (childBlocks.length > 1) {
+            const validBlocks = childBlocks
+              .map(el => (el.textContent || '').replace(/\r\n/g, '\n').split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+              .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+            if (validBlocks.length > 0) {
+              const combined = validBlocks.join('\n\n');
+              if (!hasCssArtifacts(combined) && combined.length > 15) {
+                return combined;
+              }
             }
           }
         }
 
-        // 4. Safe Text-Node recursive walker
-        const collected = [];
-        const walk = (node) => {
-          if (!node) return;
-          if (node.nodeType === 3) { // TEXT_NODE
-            const val = (node.nodeValue || '').trim();
-            if (val && !hasCssArtifacts(val) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(val) && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(val)) {
-              collected.push(val);
-            }
-          } else if (node.nodeType === 1) { // ELEMENT_NODE
-            const tag = (node.tagName || '').toLowerCase();
-            if (tag === 'style' || tag === 'script' || tag === 'noscript' || tag === 'svg' || tag === 'button' || tag === 'nav' || tag === 'header' || tag === 'footer') {
-              return;
-            }
-            for (let child = node.firstChild; child; child = child.nextSibling) {
-              walk(child);
-            }
-          }
-        };
-        walk(clone);
+        // 6. Strategy C: Text content with newline separation
+        const rawText = (clone.textContent || '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n');
 
-        const result = collected.join(' ').replace(/\s+/g, ' ').trim();
-        return hasCssArtifacts(result) ? '' : result;
+        const rawBlocks = rawText.split(/\n{2,}/);
+        const cleanBlocks = rawBlocks
+          .map(block => block.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+          .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+        const combined = cleanBlocks.join('\n\n');
+        return hasCssArtifacts(combined) ? '' : combined;
       };
 
       // Step A: Locate Description Heading Element
@@ -754,11 +788,16 @@
       if (!description) {
         const stateDesc = nextDataProps.description || nextDataProps.sellerComments || nextDataProps.dealerComments || nextDataProps.comments || '';
         if (stateDesc && !hasCssArtifacts(stateDesc)) {
-          description = stateDesc.trim();
+          description = stateDesc;
         }
       }
       if (!description && jsonLdData.description && jsonLdData.description.length > 40 && !hasCssArtifacts(jsonLdData.description)) {
-        description = jsonLdData.description.trim();
+        description = jsonLdData.description;
+      }
+
+      // Step G: Normalize multi-paragraph spacing
+      if (description) {
+        description = Normalizers.normalizeDescription(description);
       }
 
       // --- 17. SOURCE URL ---
@@ -829,7 +868,7 @@
       dealerAddress: norm.cleanText(raw.dealerAddress),
       averageRating: norm.cleanText(raw.averageRating),
       features: norm.normalizeFeatures(raw.features),
-      description: norm.cleanText(raw.description),
+      description: norm.normalizeDescription(raw.description),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || window.location.href
     };
@@ -837,12 +876,45 @@
     return { normalized, validation };
   }
 
-  function copyToClipboard(text, btnElement) {
-    if (!text || text === 'Missing / Needs Review') {
+  function copyToClipboard(text, btnElement, event) {
+    if (event) {
+      try {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      } catch (e) {}
+    }
+    const cleanStr = (text == null) ? '' : String(text);
+    if (!cleanStr.trim() || cleanStr.trim() === 'Missing / Needs Review') {
       alert('This field is missing or unextracted on this listing.');
       return;
     }
-    navigator.clipboard.writeText(text).then(() => {
+
+    const copyFallback = (str) => {
+      const textarea = document.createElement('textarea');
+      textarea.value = str;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textarea);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cleanStr).catch(() => copyFallback(cleanStr));
+    } else {
+      copyFallback(cleanStr);
+    }
+
+    if (btnElement) {
       const origText = btnElement.textContent;
       btnElement.textContent = 'COPIED!';
       btnElement.style.background = '#10b981';
@@ -852,9 +924,7 @@
         btnElement.style.background = '#f1f5f9';
         btnElement.style.color = '#0f172a';
       }, 1400);
-    }).catch(err => {
-      console.error('Clipboard copy failed:', err);
-    });
+    }
   }
 
   function createHelperPanel() {
@@ -1009,9 +1079,10 @@
           white-space: nowrap;
           transition: all 0.15s ease;
         `;
+        copyBtn.type = 'button';
         copyBtn.textContent = 'COPY';
         copyBtn.title = `Copy ${label}`;
-        copyBtn.onclick = () => copyToClipboard(val, copyBtn);
+        copyBtn.onclick = (e) => copyToClipboard(val, copyBtn, e);
 
         row.appendChild(leftCol);
         row.appendChild(copyBtn);

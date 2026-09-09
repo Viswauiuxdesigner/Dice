@@ -522,7 +522,7 @@ const CarsCoZaAdapter = {
       return /[{}\[\]]|font-size:|var\(--|@media|\.__m__|line-height:|color:|margin:|padding:|<style|\.className_|text-transform:|background-color:/i.test(str);
     };
 
-    // Helper: Safely extract human-readable text from a container, stripping style/script/svg/buttons
+    // Helper: Safely extract human-readable text from a container, stripping style/script/svg/buttons and preserving paragraphs
     const extractPureDescriptionText = (container) => {
       if (!container) return '';
       let clone;
@@ -533,7 +533,7 @@ const CarsCoZaAdapter = {
       }
 
       if (clone.querySelectorAll) {
-        // 1. Remove all non-content and styling elements completely
+        // 1. Remove all non-content, styling, script and hidden elements completely
         const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, nav, header, footer, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
         junk.forEach(el => el.remove());
 
@@ -546,43 +546,53 @@ const CarsCoZaAdapter = {
           }
         });
 
-        // 3. Extract text from paragraph or text-block elements first
-        const pElements = Array.from(clone.querySelectorAll('p, [class*="paragraph"], [class*="text-"]'));
-        const validParagraphs = pElements
-          .map(p => (p.textContent || '').replace(/\s+/g, ' ').trim())
-          .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+        // 3. Replace <br> tags with \n
+        clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
 
-        if (validParagraphs.length > 0) {
-          const combined = validParagraphs.join('\n\n');
-          if (!hasCssArtifacts(combined) && combined.length > 15) {
-            return combined;
+        // 4. Strategy A: Extract from explicit <p> paragraph elements
+        const pElements = Array.from(clone.querySelectorAll('p'));
+        if (pElements.length > 0) {
+          const validParagraphs = pElements
+            .map(p => (p.textContent || '').replace(/\r\n/g, '\n').split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+            .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+          if (validParagraphs.length > 0) {
+            const combined = validParagraphs.join('\n\n');
+            if (!hasCssArtifacts(combined) && combined.length > 15) {
+              return combined;
+            }
+          }
+        }
+
+        // 5. Strategy B: Check if there are multiple child block elements (div, section, article, li)
+        const childBlocks = Array.from(clone.children).filter(el => /^(DIV|SECTION|ARTICLE|LI)$/i.test(el.tagName));
+        if (childBlocks.length > 1) {
+          const validBlocks = childBlocks
+            .map(el => (el.textContent || '').replace(/\r\n/g, '\n').split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+            .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+          if (validBlocks.length > 0) {
+            const combined = validBlocks.join('\n\n');
+            if (!hasCssArtifacts(combined) && combined.length > 15) {
+              return combined;
+            }
           }
         }
       }
 
-      // 4. Safe Text-Node recursive walker
-      const collected = [];
-      const walk = (node) => {
-        if (!node) return;
-        if (node.nodeType === 3) { // TEXT_NODE
-          const val = (node.nodeValue || '').trim();
-          if (val && !hasCssArtifacts(val) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(val) && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(val)) {
-            collected.push(val);
-          }
-        } else if (node.nodeType === 1) { // ELEMENT_NODE
-          const tag = (node.tagName || '').toLowerCase();
-          if (tag === 'style' || tag === 'script' || tag === 'noscript' || tag === 'svg' || tag === 'button' || tag === 'nav' || tag === 'header' || tag === 'footer') {
-            return;
-          }
-          for (let child = node.firstChild; child; child = child.nextSibling) {
-            walk(child);
-          }
-        }
-      };
-      walk(clone);
+      // 6. Strategy C: Text content with newline separation
+      const rawText = (clone.textContent || '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
 
-      const result = collected.join(' ').replace(/\s+/g, ' ').trim();
-      return hasCssArtifacts(result) ? '' : result;
+      const rawBlocks = rawText.split(/\n{2,}/);
+      const cleanBlocks = rawBlocks
+        .map(block => block.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim())
+        .filter(p => p.length > 0 && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(p) && !hasCssArtifacts(p));
+
+      const combined = cleanBlocks.join('\n\n');
+      return hasCssArtifacts(combined) ? '' : combined;
     };
 
     // Step A: Locate Description Heading Element
@@ -652,11 +662,21 @@ const CarsCoZaAdapter = {
     if (!description) {
       const stateDesc = nextDataProps.description || nextDataProps.sellerComments || nextDataProps.dealerComments || nextDataProps.comments || '';
       if (stateDesc && !hasCssArtifacts(stateDesc)) {
-        description = stateDesc.trim();
+        description = stateDesc;
       }
     }
     if (!description && jsonLdData.description && jsonLdData.description.length > 40 && !hasCssArtifacts(jsonLdData.description)) {
-      description = jsonLdData.description.trim();
+      description = jsonLdData.description;
+    }
+
+    // Step G: Normalize multi-paragraph spacing
+    if (description) {
+      if (window.CarNormalizers && window.CarNormalizers.normalizeDescription) {
+        description = window.CarNormalizers.normalizeDescription(description);
+      } else {
+        const rawBlocks = description.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n{2,}/);
+        description = rawBlocks.map(b => b.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join(' ').trim()).filter(Boolean).join('\n\n');
+      }
     }
 
     // --- 17. SOURCE URL ---
@@ -710,7 +730,7 @@ window.CarSourceExtractor = {
       dealerAddress: norm.cleanText(raw.dealerAddress),
       averageRating: norm.cleanText(raw.averageRating),
       features: norm.normalizeFeatures(raw.features),
-      description: norm.cleanText(raw.description),
+      description: norm.normalizeDescription(raw.description),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || doc.location?.href || ''
     };

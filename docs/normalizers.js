@@ -94,5 +94,35 @@ window.CarNormalizers = {
       return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
     }
     return '';
+  },
+
+  /**
+   * Normalize description preserving multi-paragraph breaks (\n\n) without collapsing newlines
+   */
+  normalizeDescription(val) {
+    if (!val || typeof val !== 'string') return '';
+    let text = val
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    // Split on double newlines or blocks
+    const rawParagraphs = text.split(/\n{2,}/);
+    const cleanParagraphs = [];
+
+    for (const rawP of rawParagraphs) {
+      // Within each paragraph, collapse internal single newlines or multiple spaces into a single space
+      const cleanP = rawP
+        .split('\n')
+        .map(line => line.replace(/[ \t]+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (cleanP && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(cleanP) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(cleanP)) {
+        cleanParagraphs.push(cleanP);
+      }
+    }
+
+    return cleanParagraphs.join('\n\n');
   }
 };
