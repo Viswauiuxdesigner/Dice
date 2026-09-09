@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.2.3
+// @version      2.2.4
 // @description  Local car data extraction helper for Cars.co.za listings (18 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -18,7 +18,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.2.3';
+  const SCRIPT_VERSION = '2.2.4';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -546,77 +546,124 @@
       let dealerAddress = '';
       let averageRating = '';
 
-      // Dealer Address
-      dealerAddress = getSelectorText(doc, ['[data-test="dealer-address"]', '[data-testid="dealer-address"]', '[data-test="dealer-location"]', '[data-testid="dealer-location"]', '.dealer-address', '.seller-info__address', '.dealer-location']);
-      let locLeaf = null;
-      if (!dealerAddress) {
-        locLeaf = allLeafElements.find(item => /\b(Sandton|Cape Town|Johannesburg|Durban|Pretoria|Centurion|Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape)\b/i.test(item.text) && item.text.length < 50 && !item.text.startsWith('R'));
-        if (locLeaf) dealerAddress = locLeaf.text;
-      }
-      if (!dealerAddress) {
-        dealerAddress = nextDataProps.dealer?.address || nextDataProps.dealer?.location || nextDataProps.location || jsonLdData.offers?.seller?.address || '';
+      // Step A: Extract Dealer Name (distinct from address)
+      // 1. Explicit data-cy, data-test, data-testid selectors
+      dealerName = getSelectorText(doc, [
+        '[data-cy="seller-name"]', '[data-test="dealer-name"]', '[data-testid="dealer-name"]',
+        '[data-cy="dealer-name"]', '.dealer-name', '[class*="dealer-name"]', '[class*="dealer__name"]',
+        '.seller-info__title', '.dealer-title', '#dealer-name',
+        '.dealer-info .name', '.seller-info .name', '.dealer-info [class*="name"]'
+      ]);
+
+      // 2. Links to dealer group / profile (excluding navigation buttons)
+      if (!dealerName) {
+        const dealerLinks = Array.from(doc.querySelectorAll('a[href*="/groups/"], a[href*="/dealers/"], a[href*="/dealer/"], a[href*="/seller/"]'));
+        for (const link of dealerLinks) {
+          if (link.closest('nav, header, footer')) continue;
+          const txt = (link.textContent || '').trim();
+          if (txt && txt.length > 2 && txt.length < 80 && !/^(?:view\s*all|all\s*cars|contact|directions|website|dealer\s*banner|back\s*to\s*search)$/i.test(txt)) {
+            dealerName = txt;
+            break;
+          }
+        }
       }
 
-      // Dealer Name
-      if (locLeaf && locLeaf.el) {
-        const dealerContainer = locLeaf.el.closest('[class*="dealer"], [class*="seller"], [data-test*="dealer"], [data-testid*="dealer"], aside, section, div[style*="border"], div') || locLeaf.el.parentElement?.parentElement;
-        if (dealerContainer && dealerContainer !== doc.body) {
-          const nameEl = dealerContainer.querySelector('[data-test*="dealer-name"], [data-testid*="dealer-name"], [class*="dealer-name"], [class*="dealer__name"], [class*="seller-name"], [class*="dealerTitle"], strong, h2, h3, h4, h5, h6, a[href*="/dealers/"], a[href*="/dealer/"]');
-          if (nameEl) {
-            const txt = (nameEl.textContent || '').trim();
-            if (txt && !/^(?:seller|dealer|dealership)\s*(?:details|information|info|overview)$/i.test(txt) && txt !== dealerAddress && !/^\d+(\.\d+)?\s*(?:reviews?|\(\d+\))/i.test(txt)) {
+      // 3. Dealer Card Container Heading
+      if (!dealerName) {
+        const sellerContainer = doc.querySelector('[data-cy="seller-address"], [data-cy="seller-info"], [class*="seller-info"], [class*="dealer-info"], [class*="dealer-card"]');
+        if (sellerContainer) {
+          const titleEl = sellerContainer.querySelector('h1, h2, h3, h4, h5, h6, strong, .name, [class*="name"]');
+          if (titleEl) {
+            const txt = (titleEl.textContent || '').trim();
+            if (txt && txt.length > 2 && txt.length < 80 && !/^(?:seller|dealer|dealership)\s*(?:details|information|info|overview|address)$/i.test(txt)) {
               dealerName = txt;
             }
           }
-          if (!dealerName && locLeaf.el.previousElementSibling) {
-            const prevTxt = (locLeaf.el.previousElementSibling.textContent || '').trim();
-            if (prevTxt && prevTxt.length < 60 && !/^(?:seller|dealer)\s*(?:details|info)/i.test(prevTxt)) {
-              dealerName = prevTxt;
+        }
+      }
+
+      // 4. Fallback: Next.js Dehydrated State / JSON-LD
+      if (!dealerName) {
+        const searchNextDataDealerName = (obj, depth = 0) => {
+          if (!obj || typeof obj !== 'object' || depth > 8) return '';
+          if (obj.agent_name && typeof obj.agent_name === 'string') return obj.agent_name.trim();
+          if (obj.dealer_name && typeof obj.dealer_name === 'string') return obj.dealer_name.trim();
+          if (obj.dealer && typeof obj.dealer.name === 'string') return obj.dealer.name.trim();
+          if (obj.seller && typeof obj.seller.name === 'string') return obj.seller.name.trim();
+          for (const key of Object.keys(obj)) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+              const res = searchNextDataDealerName(obj[key], depth + 1);
+              if (res) return res;
             }
           }
-          if (!dealerName) {
-            const imgEl = dealerContainer.querySelector('img[alt]');
-            if (imgEl && imgEl.alt && !/logo|icon|avatar|dealer|seller/i.test(imgEl.alt.trim())) {
-              dealerName = imgEl.alt.trim();
-            }
+          return '';
+        };
+        dealerName = searchNextDataDealerName(rawNextData) || searchNextDataDealerName(nextDataProps) || jsonLdData.offers?.seller?.name || '';
+      }
+
+      // Clean Dealer Name
+      if (dealerName) {
+        dealerName = dealerName.replace(/^(?:Seller|Dealer|Dealership)\s*:?\s*/i, '').trim();
+      }
+
+      // Step B: Extract Dealer Address (distinct from Dealer Name)
+      // 1. Look for element next to map pin icon
+      const mapPinEl = doc.querySelector('svg.tabler-icon-map-pin, svg[class*="map-pin"], svg[class*="pin"], [data-cy="seller-location"], [data-test="dealer-location"], [data-testid="dealer-location"], [data-test="dealer-address"], [data-testid="dealer-address"], .dealer-address, .dealer-location');
+      if (mapPinEl) {
+        const parent = mapPinEl.closest('div, p, span, li') || mapPinEl.parentElement;
+        if (parent) {
+          const txt = (parent.textContent || '').trim();
+          if (txt && txt.length > 3 && txt.length < 90 && txt !== dealerName && !/^(?:view\s*map|map|directions)$/i.test(txt)) {
+            dealerAddress = txt;
           }
         }
       }
 
-      if (!dealerName) {
-        dealerName = getSelectorText(doc, [
-          '[data-test="dealer-name"]', '[data-testid="dealer-name"]',
-          '.dealer-name', '[class*="dealer-name"]', '[class*="dealer__name"]',
-          '.seller-info__title', '.dealer-title', '#dealer-name'
-        ]);
-      }
-      if (!dealerName) {
-        const dealerLink = doc.querySelector('a[href*="/dealers/"], a[href*="/dealer/"], a[href*="/seller/"]');
-        if (dealerLink) {
-          const txt = (dealerLink.textContent || '').trim();
-          if (txt && !/view all|all cars|contact|directions/i.test(txt)) {
-            dealerName = txt;
-          }
+      // 2. Search for explicit City, Province pattern (e.g. "Centurion, Gauteng", "Sandton, Gauteng", "Vredenburg, Western Cape")
+      if (!dealerAddress) {
+        const provinceRegex = /^[A-Z][a-zA-Z\s\-']+(?:,\s*|\s+)(?:Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape|Free State|Limpopo|Mpumalanga|North West|Northern Cape)$/i;
+        const candidates = allLeafElements.filter(item => provinceRegex.test(item.text.trim()) && item.text.trim() !== dealerName);
+        if (candidates.length > 0) {
+          dealerAddress = candidates[0].text.trim();
         }
       }
-      if (!dealerName) {
-        const dealerHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Seller|Dealer|Dealership)\s*(?:Details|Information|Info)$/i.test(el.textContent.trim()));
-        if (dealerHeading) {
-          const card = dealerHeading.closest('div, section, aside') || dealerHeading.parentElement;
-          const candidateEls = card.querySelectorAll('.dealer-name, strong, h3, h4, h5, a, p, span');
-          for (const el of candidateEls) {
-            if (el !== dealerHeading) {
-              const txt = (el.textContent || '').trim();
-              if (txt && txt.length > 1 && txt.length < 60 && txt !== dealerAddress && !/^(?:seller|dealer|dealership)\s*(?:details|info|information)$/i.test(txt) && !/^\d+(\.\d+)?/i.test(txt)) {
-                dealerName = txt;
-                break;
-              }
+
+      // 3. Search for elements containing city & province
+      if (!dealerAddress) {
+        const locMatch = allLeafElements.find(item => {
+          const t = item.text.trim();
+          if (t === dealerName || t.length > 60 || t.startsWith('R') || /^(?:used\s+cars|view\s+map)/i.test(t)) return false;
+          return /(?:Sandton|Cape Town|Johannesburg|Durban|Pretoria|Centurion|Vredenburg|Bellville|Randburg|Boksburg|Roodepoort|Bloemfontein|Gqeberha|Port Elizabeth|East London|Pietermaritzburg|Polokwane|Nelspruit|Mbombela)\s*,\s*(?:Gauteng|Western Cape|KwaZulu-Natal|Eastern Cape|Free State|Limpopo|Mpumalanga|North West|Northern Cape)/i.test(t);
+        });
+        if (locMatch) {
+          dealerAddress = locMatch.text.trim();
+        }
+      }
+
+      // 4. Fallback: Next.js Dehydrated State (agent_locality + province, dealer.address, location)
+      if (!dealerAddress) {
+        const searchNextDataAddress = (obj, depth = 0) => {
+          if (!obj || typeof obj !== 'object' || depth > 8) return '';
+          if (obj.agent_locality && obj.province) return `${obj.agent_locality.trim()}, ${obj.province.trim()}`;
+          if (obj.agent_locality && !obj.province) return obj.agent_locality.trim();
+          if (obj.dealer_location && typeof obj.dealer_location === 'string') return obj.dealer_location.trim();
+          if (obj.dealer_address && typeof obj.dealer_address === 'string') return obj.dealer_address.trim();
+          if (obj.dealer?.address && typeof obj.dealer.address === 'string') return obj.dealer.address.trim();
+          if (obj.dealer?.location && typeof obj.dealer.location === 'string') return obj.dealer.location.trim();
+          for (const key of Object.keys(obj)) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+              const res = searchNextDataAddress(obj[key], depth + 1);
+              if (res) return res;
             }
           }
-        }
+          return '';
+        };
+        dealerAddress = searchNextDataAddress(rawNextData) || searchNextDataAddress(nextDataProps) || jsonLdData.offers?.seller?.address || '';
       }
-      if (!dealerName) {
-        dealerName = nextDataProps.dealer?.name || nextDataProps.seller?.name || jsonLdData.offers?.seller?.name || '';
+
+      // Strict validation: Dealer Address must NEVER equal Dealer Name
+      if (dealerAddress === dealerName) {
+        dealerAddress = '';
       }
 
       // Average Rating
