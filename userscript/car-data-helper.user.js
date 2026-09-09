@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.2.2
+// @version      2.2.3
 // @description  Local car data extraction helper for Cars.co.za listings (18 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
@@ -18,7 +18,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.2.2';
+  const SCRIPT_VERSION = '2.2.3';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -182,11 +182,14 @@
 
       // 1. Next.js Hydrated State Deep Search
       let nextDataProps = {};
+      let rawNextData = null;
       try {
         const nextScript = doc.querySelector('script[id="__NEXT_DATA__"]');
         if (nextScript && nextScript.textContent) {
           const parsed = JSON.parse(nextScript.textContent);
+          rawNextData = parsed;
           nextDataProps = parsed.props?.pageProps?.listing ||
+                          parsed.props?.pageProps?.vehicle?.attributes ||
                           parsed.props?.pageProps?.vehicle ||
                           parsed.props?.pageProps?.initialState?.vehicle ||
                           parsed.props?.pageProps || {};
@@ -987,12 +990,12 @@
         vehicleHighlights = extractedCards.join('\n\n');
       }
 
-      // 4. Fallback: Deep recursive search in nextDataProps / SSR state
-      if (!vehicleHighlights && nextDataProps) {
+      // 4. Fallback: Deep recursive search in Next.js State (handles vehicle_highlights, key_highlights, etc.)
+      if (!vehicleHighlights && (nextDataProps || rawNextData)) {
         const searchNextDataHighlights = (obj, depth = 0) => {
-          if (!obj || typeof obj !== 'object' || depth > 5) return null;
+          if (!obj || typeof obj !== 'object' || depth > 8) return null;
           for (const key of Object.keys(obj)) {
-            if (/^(?:vehicleHighlights|highlights|keyHighlights|insights|vehicleInsights|specsHighlights|specHighlights|sellingPoints|keySpecs)$/i.test(key)) {
+            if (/^(?:vehicle_?highlights?|key_?highlights?|highlights?|vehicle_?insights?|insights?|specs?_?highlights?|selling_?points?|key_?specs?)$/i.test(key)) {
               const val = obj[key];
               if (Array.isArray(val) && val.length > 0) return val;
             }
@@ -1006,7 +1009,7 @@
           return null;
         };
 
-        const rawHL = searchNextDataHighlights(nextDataProps);
+        const rawHL = searchNextDataHighlights(rawNextData) || searchNextDataHighlights(nextDataProps);
         if (Array.isArray(rawHL) && rawHL.length > 0) {
           const stateCards = rawHL.map(item => {
             if (typeof item === 'string') return item.trim();
