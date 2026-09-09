@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Car Data Entry Helper
 // @namespace    local.car.helper
-// @version      2.2.1
+// @version      2.2.2
 // @description  Local car data extraction helper for Cars.co.za listings (18 fields manual COPY workflow, semantic value-anchored extraction)
 // @match        https://www.cars.co.za/*
 // @match        https://tamilnadu2026.dicewebfreelancers.com/*
 // @match        *://*/*cars-co-za-sample.html*
 // @match        *://*/*cars-co-za-ferrari-sample.html*
+// @match        *://*/*cars-co-za-suzuki-sample.html*
 // @match        file://*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -17,7 +18,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.2.1';
+  const SCRIPT_VERSION = '2.2.2';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -837,16 +838,16 @@
         description = Normalizers.normalizeDescription(description);
       }
 
-      // --- 16. VEHICLE HIGHLIGHTS (Dynamic multi-card extractor) ---
+      // --- 16. VEHICLE HIGHLIGHTS (Robust multi-card structural extractor) ---
       let vehicleHighlights = '';
 
-      // Helper: Safely extract text lines from a single highlight card
+      // Helper: Safely extract human-readable text lines from an element
       const extractHighlightCardLines = (el) => {
         if (!el) return [];
         let clone;
         try { clone = el.cloneNode(true); } catch (e) { clone = el; }
         if (clone.querySelectorAll) {
-          const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
+          const junk = clone.querySelectorAll('style, script, noscript, svg, button, iframe, nav, header, footer, [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [hidden]');
           junk.forEach(j => j.remove());
           clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
         }
@@ -858,7 +859,7 @@
         const rawLines = text.split('\n');
         const cleanLines = rawLines
           .map(l => l.replace(/[ \t]+/g, ' ').trim())
-          .filter(l => l.length > 0 && !/^(?:vehicle\s+|key\s+)?highlights:?$/i.test(l) && !hasCssArtifacts(l));
+          .filter(l => l.length > 0 && !/^(?:vehicle\s+|key\s+|car\s+)?highlights:?$/i.test(l) && !hasCssArtifacts(l));
 
         const uniqueLines = [];
         for (const line of cleanLines) {
@@ -869,67 +870,143 @@
         return uniqueLines;
       };
 
-      let highlightsContainer = null;
-      const highlightHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"], summary, p, div, span')).find(el => {
+      // 1. Locate heading element for Vehicle Highlights (prefer deepest element containing the heading text)
+      const highlightHeadingCandidates = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"], summary, p, div, span')).filter(el => {
         const t = (el.textContent || '').trim();
-        return /^(?:Vehicle\s+|Key\s+)?Highlights:?$/i.test(t) && t.length < 35;
+        return /^(?:Vehicle\s+|Key\s+|Car\s+)?Highlights(?:\s*\(\d+\))?:?$/i.test(t) && t.length < 35 && !hasCssArtifacts(t);
       });
 
+      // Deepest candidate element (avoids selecting outer section container)
+      let highlightHeading = null;
+      if (highlightHeadingCandidates.length > 0) {
+        highlightHeading = highlightHeadingCandidates.reduce((deepest, curr) => {
+          if (!deepest) return curr;
+          return (deepest.contains(curr) && deepest !== curr) ? curr : deepest;
+        }, null);
+      }
+
+      // 2. Identify candidate container(s) for the highlights section
+      const candidateContainers = [];
+
       if (highlightHeading) {
-        let p = highlightHeading.parentElement;
-        while (p && p !== doc.body && p.tagName !== 'BODY') {
-          const text = (p.textContent || '').trim();
-          if (text.length > 40 && (p.tagName === 'SECTION' || p.tagName === 'ARTICLE' || p.children.length >= 2)) {
-            highlightsContainer = p;
-            break;
-          }
-          p = p.parentElement;
+        // Sibling of heading
+        if (highlightHeading.nextElementSibling) {
+          candidateContainers.push(highlightHeading.nextElementSibling);
         }
-        if (!highlightsContainer && highlightHeading.nextElementSibling) {
-          highlightsContainer = highlightHeading.nextElementSibling;
-        } else if (!highlightsContainer && highlightHeading.parentElement?.nextElementSibling) {
-          highlightsContainer = highlightHeading.parentElement.nextElementSibling;
-        }
-      }
-
-      if (!highlightsContainer) {
-        highlightsContainer = doc.querySelector('[data-test="vehicle-highlights"], [data-testid="vehicle-highlights"], [data-test="highlights"], [data-testid="highlights"], #vehicle-highlights, .vehicle-highlights, .highlights-section, section[class*="highlight"]');
-      }
-
-      if (highlightsContainer) {
-        // Find candidate leaf cards
-        const allDescendants = Array.from(highlightsContainer.querySelectorAll('div, li, article, section')).filter(el => {
-          if (el === highlightHeading || el.contains(highlightHeading) || el === highlightsContainer) return false;
-          const lines = extractHighlightCardLines(el);
-          if (lines.length >= 2 && lines.length <= 6) {
-            const hasChildCard = Array.from(el.children).some(child => extractHighlightCardLines(child).length >= 2);
-            return !hasChildCard;
+        // Sibling of heading's immediate wrapper
+        if (highlightHeading.parentElement && highlightHeading.parentElement !== doc.body) {
+          if (highlightHeading.parentElement.nextElementSibling) {
+            candidateContainers.push(highlightHeading.parentElement.nextElementSibling);
           }
-          return false;
-        });
-
-        const cards = [];
-        const seenCardTexts = new Set();
-
-        allDescendants.forEach(cardEl => {
-          const lines = extractHighlightCardLines(cardEl);
-          if (lines.length >= 2) {
-            const cardText = lines.join('\n');
-            if (!seenCardTexts.has(cardText) && !hasCssArtifacts(cardText)) {
-              cards.push(cardText);
-              seenCardTexts.add(cardText);
+          if (highlightHeading.parentElement.parentElement && highlightHeading.parentElement.parentElement !== doc.body) {
+            if (highlightHeading.parentElement.parentElement.nextElementSibling) {
+              candidateContainers.push(highlightHeading.parentElement.parentElement.nextElementSibling);
             }
           }
-        });
-
-        if (cards.length > 0) {
-          vehicleHighlights = cards.join('\n\n');
+        }
+        // Enclosing section / article / card
+        let p = highlightHeading.parentElement;
+        while (p && p !== doc.body && p.tagName !== 'BODY') {
+          candidateContainers.push(p);
+          p = p.parentElement;
         }
       }
 
-      // Fallback: Next.js Dehydrated State
+      // Direct attribute selector candidates
+      const directContainers = doc.querySelectorAll('[data-test*="highlight"], [data-testid*="highlight"], #vehicle-highlights, #highlights, .vehicle-highlights, .highlights-section, section[class*="highlight"], div[class*="highlights"]');
+      directContainers.forEach(el => candidateContainers.push(el));
+
+      // 3. Find repeated card items inside containers
+      let extractedCards = [];
+
+      for (const container of candidateContainers) {
+        if (!container || extractedCards.length > 0) break;
+
+        // Strategy A: Direct repeated children of a grid/flex wrapper inside container
+        const candidateWrappers = [container, ...Array.from(container.querySelectorAll('div, ul, ol, section, article'))];
+        
+        for (const wrapper of candidateWrappers) {
+          if (wrapper === highlightHeading || (wrapper.contains(highlightHeading) && wrapper.children.length === 1)) continue;
+          
+          const children = Array.from(wrapper.children).filter(c => {
+            if (c === highlightHeading || c.contains(highlightHeading)) return false;
+            if (/^(STYLE|SCRIPT|NOSCRIPT|SVG|BUTTON|NAV|HEADER|FOOTER)$/i.test(c.tagName)) return false;
+            return true;
+          });
+
+          if (children.length >= 1 && children.length <= 12) {
+            // Check if children look like highlight cards (each having 2 to 6 clean lines)
+            const validChildCards = children.map(c => extractHighlightCardLines(c)).filter(lines => lines.length >= 2 && lines.length <= 6);
+            
+            if (validChildCards.length >= 1 && validChildCards.length === children.length) {
+              // Found exact repeated cards wrapper!
+              extractedCards = validChildCards.map(lines => lines.join('\n'));
+              break;
+            } else if (validChildCards.length >= 2 && validChildCards.length >= children.length * 0.6) {
+              // Found cards wrapper with some minor decorative sibling nodes
+              extractedCards = validChildCards.map(lines => lines.join('\n'));
+              break;
+            }
+          }
+        }
+
+        // Strategy B: If no clear wrapper found, gather leaf-like card elements
+        if (extractedCards.length === 0) {
+          const potentialCards = Array.from(container.querySelectorAll('div, li, article, section')).filter(el => {
+            if (el === highlightHeading || el.contains(highlightHeading) || el === container) return false;
+            const lines = extractHighlightCardLines(el);
+            if (lines.length >= 2 && lines.length <= 6) {
+              // Check if child elements themselves have 2+ lines
+              const childCards = Array.from(el.children).filter(c => extractHighlightCardLines(c).length >= 2);
+              return childCards.length <= 1;
+            }
+            return false;
+          });
+
+          if (potentialCards.length >= 1 && potentialCards.length <= 12) {
+            const seen = new Set();
+            const cardsList = [];
+            for (const cardEl of potentialCards) {
+              const lines = extractHighlightCardLines(cardEl);
+              if (lines.length >= 2) {
+                const text = lines.join('\n');
+                if (!seen.has(text) && !hasCssArtifacts(text)) {
+                  seen.add(text);
+                  cardsList.push(text);
+                }
+              }
+            }
+            if (cardsList.length > 0) {
+              extractedCards = cardsList;
+            }
+          }
+        }
+      }
+
+      if (extractedCards.length > 0) {
+        vehicleHighlights = extractedCards.join('\n\n');
+      }
+
+      // 4. Fallback: Deep recursive search in nextDataProps / SSR state
       if (!vehicleHighlights && nextDataProps) {
-        const rawHL = nextDataProps.highlights || nextDataProps.vehicleHighlights || nextDataProps.keyHighlights || nextDataProps.insights || nextDataProps.vehicleInsights || nextDataProps.specsHighlights || nextDataProps.specHighlights;
+        const searchNextDataHighlights = (obj, depth = 0) => {
+          if (!obj || typeof obj !== 'object' || depth > 5) return null;
+          for (const key of Object.keys(obj)) {
+            if (/^(?:vehicleHighlights|highlights|keyHighlights|insights|vehicleInsights|specsHighlights|specHighlights|sellingPoints|keySpecs)$/i.test(key)) {
+              const val = obj[key];
+              if (Array.isArray(val) && val.length > 0) return val;
+            }
+          }
+          for (const key of Object.keys(obj)) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+              const res = searchNextDataHighlights(obj[key], depth + 1);
+              if (res) return res;
+            }
+          }
+          return null;
+        };
+
+        const rawHL = searchNextDataHighlights(nextDataProps);
         if (Array.isArray(rawHL) && rawHL.length > 0) {
           const stateCards = rawHL.map(item => {
             if (typeof item === 'string') return item.trim();
