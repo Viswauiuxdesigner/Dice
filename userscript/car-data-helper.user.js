@@ -1776,42 +1776,77 @@
         if (el) { el.value = fields.averageRating; triggerEvents(el); }
       }
 
-      // 14. FEATURES (Textarea - exact preservation of internal word spacing and newlines)
+      // 14. FEATURES (Textarea / Input - exact preservation of internal word spacing and newlines)
       if (isClean(fields.features)) {
         const findFeaturesElement = () => {
-          // Direct textarea selectors & placeholder matches
+          // Helper to check safety and prevent targeting excluded fields
+          const isSafeFeaturesEl = (el) => {
+            if (!el || !this.isSafeEditable(el, false)) return false;
+            const id = (el.id || '').toLowerCase();
+            const name = (el.name || '').toLowerCase();
+            if (id === 'condition' || name === 'condition' || id === 'fields_45' || name === 'fields[45]') return false;
+            if (/highlight|address|dealer|contact|phone|number|price|source_url|description/i.test(id + ' ' + name)) return false;
+            return true;
+          };
+
+          // 1. Direct known IDs and names
           const directSelectors = [
             'textarea#target_features_text',
             'textarea#target_features',
             'textarea#features',
+            '#target_features_text',
+            '#target_features',
+            '#features',
             'textarea[name="target_features_text"]',
             'textarea[name="target_features"]',
             'textarea[name="features"]',
-            'textarea[placeholder*="feature" i]',
-            'textarea[placeholder*="Minimum 3 features" i]',
-            'textarea[placeholder*="minimum 3 features" i]'
+            'textarea[name="fields[features]"]',
+            'textarea[name="fields[Features]"]',
+            'input#target_features_text',
+            'input#target_features',
+            'input[name="target_features_text"]',
+            'input[name="target_features"]'
           ];
           for (const sel of directSelectors) {
             try {
               const el = doc.querySelector(sel);
-              if (el && this.isSafeEditable(el, false)) return el;
+              if (isSafeFeaturesEl(el)) return el;
             } catch (e) {}
           }
 
-          // Semantic label lookup specifically searching for textarea associated with "Features"
-          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          // 2. Direct attribute inspection (placeholder, title, data-placeholder) without relying on CSS flags
+          const candidateElements = doc.querySelectorAll('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"])');
+          for (const cand of candidateElements) {
+            if (!isSafeFeaturesEl(cand)) continue;
+            const ph = (cand.getAttribute('placeholder') || '') + ' ' + (cand.getAttribute('title') || '') + ' ' + (cand.getAttribute('data-placeholder') || '') + ' ' + (cand.getAttribute('aria-label') || '');
+            if (/minimum\s*3\s*features|\bfeatures\b/i.test(ph)) {
+              return cand;
+            }
+          }
+
+          // 3. Semantic label lookup specifically searching for element associated with "Features"
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label, span.hasPopover, div.control-label');
           for (const lbl of allLabels) {
-            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/\bfeatures\b/i.test(lText)) {
+            const lText = ((lbl.textContent || '') + ' ' + (lbl.getAttribute('title') || '') + ' ' + (lbl.getAttribute('data-content') || '') + ' ' + (lbl.getAttribute('data-original-title') || '')).replace(/\s+/g, ' ').trim();
+            if (/\bfeatures\b/i.test(lText) || /minimum\s*3\s*features/i.test(lText)) {
               const forId = lbl.getAttribute('for');
               if (forId) {
                 const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
-                if (el && this.isSafeEditable(el, false)) return el;
+                if (isSafeFeaturesEl(el)) return el;
               }
-              const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
+              // Check inside label
+              const inside = lbl.querySelector('textarea, input');
+              if (isSafeFeaturesEl(inside)) return inside;
+
+              // Check container / sibling hierarchy (.control-group, .form-group, etc.)
+              const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item, fieldset, div') || lbl.parentElement;
               if (container) {
                 const siblingTextarea = container.querySelector('textarea');
-                if (siblingTextarea && this.isSafeEditable(siblingTextarea, false)) return siblingTextarea;
+                if (isSafeFeaturesEl(siblingTextarea)) return siblingTextarea;
+                const siblingInput = container.querySelector('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"])');
+                if (isSafeFeaturesEl(siblingInput)) return siblingInput;
+                const contentEditable = container.querySelector('[contenteditable="true"]');
+                if (contentEditable) return contentEditable;
               }
             }
           }
@@ -1821,8 +1856,26 @@
         const el = findFeaturesElement();
         if (el) {
           const rawFeaturesText = String(fields.features).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-          el.value = rawFeaturesText;
-          triggerEvents(el);
+          if (el.isContentEditable) {
+            el.innerText = rawFeaturesText;
+            triggerEvents(el);
+          } else {
+            el.value = rawFeaturesText;
+            try {
+              const proto = Object.getPrototypeOf(el);
+              const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+              if (descriptor && descriptor.set) {
+                descriptor.set.call(el, rawFeaturesText);
+              }
+            } catch (e) {}
+            triggerEvents(el);
+            try {
+              const $ = (typeof unsafeWindow !== 'undefined' && unsafeWindow.$) || (typeof window !== 'undefined' && window.$);
+              if ($ && typeof $(el).trigger === 'function') {
+                $(el).trigger('input').trigger('change');
+              }
+            } catch (e) {}
+          }
         }
       }
 
