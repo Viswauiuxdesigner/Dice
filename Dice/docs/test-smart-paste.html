@@ -236,6 +236,63 @@
 
         document.body.removeChild(mockDiv);
 
+        log('\n=== TEST 8: CARS.CO.ZA REAL FEATURE GRID EXTRACTION & FAIL-SAFE CONDITION TEST ===');
+        // Test 8A: Discrete Feature Grid Extraction
+        const hiluxHtml = `
+          <!DOCTYPE html><html><body>
+          <h1>2024 Toyota Hilux</h1>
+          <div class="features-section">
+            <h3>Features</h3>
+            <div class="grid grid-cols-2">
+              <div class="feature-item">ABS Brakes</div>
+              <div class="feature-item">Air Conditioning</div>
+              <div class="feature-item">Airbags</div>
+              <div class="feature-item">Bluetooth Ready</div>
+              <div class="feature-item">Drink Holder</div>
+              <div class="feature-item">EBD Electronic Brake Distribution</div>
+              <div class="feature-item">Electric Mirrors</div>
+              <div class="feature-item">Electric Windows</div>
+              <div class="feature-item">ESP Electronic Stability Program</div>
+              <div class="feature-item">Full Service History</div>
+              <div class="feature-item">Full Spare Wheel</div>
+              <div class="feature-item">Immobilizer</div>
+              <div class="feature-item">Manual</div>
+              <div class="feature-item">One Owner</div>
+              <div class="feature-item">Power Steering</div>
+              <div class="feature-item">Radio/CD/MP3</div>
+              <div class="feature-item">Rubberized Load Body</div>
+              <div class="feature-item">Trip Computer</div>
+              <div class="feature-item">USB Input</div>
+            </div>
+          </div>
+          </body></html>
+        `;
+        const mockSourceDoc = parser.parseFromString(hiluxHtml, 'text/html');
+
+        const extractedHilux = window.CarSourceExtractor.extractFromDocument(mockSourceDoc).normalized;
+        assert(extractedHilux.features.includes('\n'), 'Features extracted as multi-line string');
+        const extractedLines = extractedHilux.features.split('\n');
+        assert(extractedLines.length === 19, `Extracted exact 19 separate feature items (Got: ${extractedLines.length})`);
+        assert(extractedLines[0] === 'ABS Brakes', 'First feature is "ABS Brakes"');
+        assert(extractedLines[1] === 'Air Conditioning', 'Second feature preserves internal space: "Air Conditioning"');
+        assert(extractedLines[5] === 'EBD Electronic Brake Distribution', 'Long feature preserves spaces: "EBD Electronic Brake Distribution"');
+        assert(extractedLines[8] === 'ESP Electronic Stability Program', 'Feature 9: "ESP Electronic Stability Program"');
+        assert(extractedLines[18] === 'USB Input', 'Feature 19: "USB Input"');
+        assert(!extractedHilux.features.includes('ABS BrakesAir Conditioning'), 'Features are NOT merged without spaces');
+
+        // Test 8B: Condition Fail-Safe (Single Condition control remains untouched)
+        const singleCondDiv = document.createElement('div');
+        singleCondDiv.innerHTML = `
+          <div class="control-group">
+            <label class="control-label">Condition *</label>
+            <input type="text" id="condition" name="condition" value="Used Or New">
+          </div>
+        `;
+        document.body.appendChild(singleCondDiv);
+        window.CarSmartPasteEngine.fillTargetForm(singleCondDiv, { condition: 'Excellent Condition' });
+        assert(singleCondDiv.querySelector('#condition').value === 'Used Or New', 'Fail-safe: First condition #condition with "Used Or New" remains UNTOUCHED when no second condition field exists');
+        document.body.removeChild(singleCondDiv);
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

@@ -75,10 +75,14 @@
     normalizeFeatures(val) {
       if (!val) return '';
       if (Array.isArray(val)) {
-        return val.map(f => this.cleanText(f)).filter(Boolean).join('\n');
+        return val.map(f => this.cleanText(typeof f === 'object' ? (f.name || f.title || f.label || '') : f)).filter(Boolean).join('\n');
       }
       if (typeof val === 'string') {
-        return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
+        return val
+          .split(/\r?\n/)
+          .map(f => this.cleanText(f))
+          .filter(Boolean)
+          .join('\n');
       }
       return '';
     },
@@ -697,33 +701,88 @@
         }
       }
 
-      // --- 14. FEATURES (Preserved Successful Logic) ---
-      let featuresList = nextDataProps.features || [];
-      if (typeof featuresList === 'string') {
-        featuresList = featuresList.split('\n').map(f => f.trim()).filter(Boolean);
+      // --- 14. FEATURES (Discrete Structural Grid & Item Extractor) ---
+      let featuresList = [];
+
+      // 1. Check Next.js state props
+      if (Array.isArray(nextDataProps.features)) {
+        featuresList = nextDataProps.features.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+      } else if (Array.isArray(nextDataProps.vehicleFeatures)) {
+        featuresList = nextDataProps.vehicleFeatures.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+      } else if (Array.isArray(nextDataProps.equipment)) {
+        featuresList = nextDataProps.equipment.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+      } else if (typeof nextDataProps.features === 'string' && nextDataProps.features.includes('\n')) {
+        featuresList = nextDataProps.features.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
       }
 
+      // 2. DOM Structural Extraction
       if (!featuresList || featuresList.length === 0) {
-        const featureHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Key\s+|Vehicle\s+|Standard\s+)?Features$/i.test(el.textContent.trim()));
-        let featuresContainer = null;
+        const allHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, div, span'));
+        const featureHeading = allHeadings.find(el => {
+          const t = el.textContent.trim();
+          return /^(?:Key\s+|Vehicle\s+|Standard\s+|Installed\s+)?Features(?:\s*&\s*Specs)?$/i.test(t) && el.children.length === 0;
+        });
+
+        let featuresSection = null;
         if (featureHeading) {
-          featuresContainer = featureHeading.closest('div, section, article') || featureHeading.parentElement;
-        } else {
-          featuresContainer = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, .features-grid, .features-list, .equipment-list');
+          featuresSection = featureHeading.closest('section, article, [class*="features"], [class*="card"], [class*="section"]') || featureHeading.parentElement?.parentElement || featureHeading.parentElement;
+        }
+        if (!featuresSection) {
+          featuresSection = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, #features, .features-grid, .features-list, .equipment-list, [class*="features-"]');
         }
 
-        if (featuresContainer) {
-          const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], div, p');
+        if (featuresSection) {
           const items = [];
-          itemEls.forEach(el => {
-            if (el.children.length <= 1) {
-              const txt = (el.textContent || '').trim();
-              if (txt && txt.length > 1 && txt.length < 80 && !/^(features|key features|show more|view all|read more|back to search|used cars)$/i.test(txt)) {
-                if (!items.includes(txt)) items.push(txt);
+          const seen = new Set();
+
+          const addFeature = (rawText) => {
+            if (!rawText) return;
+            const clean = rawText.replace(/\s+/g, ' ').trim();
+            if (clean && clean.length >= 2 && clean.length <= 100) {
+              if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars)$/i.test(clean)) {
+                if (!seen.has(clean.toLowerCase())) {
+                  seen.add(clean.toLowerCase());
+                  items.push(clean);
+                }
               }
             }
-          });
-          if (items.length > 0) featuresList = items;
+          };
+
+          // Strategy A: Direct list items <li>
+          const listItems = featuresSection.querySelectorAll('li');
+          if (listItems.length > 0) {
+            listItems.forEach(li => addFeature(li.textContent));
+          }
+
+          // Strategy B: Dedicated feature item / chip / badge classes
+          if (items.length === 0) {
+            const chipItems = featuresSection.querySelectorAll('[class*="feature-item"], [class*="feature_item"], [class*="featureItem"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="tag"]');
+            if (chipItems.length > 0) {
+              chipItems.forEach(chip => addFeature(chip.textContent));
+            }
+          }
+
+          // Strategy C: Grid items / Leaf text elements inside features container
+          if (items.length === 0) {
+            const allElements = featuresSection.querySelectorAll('*');
+            allElements.forEach(el => {
+              if (el === featureHeading || el.contains(featureHeading)) return;
+              if (/^(?:script|style|svg|path|img|button)$/i.test(el.tagName)) return;
+              const nonIconChildren = Array.from(el.children).filter(c => !/^(?:svg|path|img|i)$/i.test(c.tagName));
+              if (nonIconChildren.length === 0) {
+                const text = el.textContent;
+                if (text && text.includes('\n')) {
+                  text.split('\n').forEach(line => addFeature(line));
+                } else {
+                  addFeature(text);
+                }
+              }
+            });
+          }
+
+          if (items.length > 0) {
+            featuresList = items;
+          }
         }
       }
 
@@ -1603,64 +1662,113 @@
         if (el) { el.value = fields.bodyColor; triggerEvents(el); }
       }
 
-      // 9. CONDITION (Target SECOND Condition text input ONLY: #fields_45 / name="fields[45]"; NEVER touch #condition / name="condition")
+      // 9. CONDITION (Target SECOND Condition input ONLY; NEVER touch #condition / name="condition" / "Used Or New")
       if (isClean(fields.condition)) {
         const findSecondConditionField = () => {
-          // 1. Direct real form selector (#fields_45) and test harness selector
+          // Helper: Strict exclusion check to ensure element is NOT the first condition or other excluded controls
+          const isEligibleSecondCondition = (el) => {
+            if (!el) return false;
+            const tag = (el.tagName || '').toUpperCase();
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return false;
+            if (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+            const id = (el.id || '').toLowerCase();
+            const name = (el.name || '').toLowerCase();
+            if (id === 'condition' || name === 'condition') return false;
+            if (/used_or_new|used-or-new|usedornew|category|currency|phone|contact|seat|rating|price|address|dealer/i.test(id + ' ' + name)) return false;
+            const val = (el.value || '').trim().toLowerCase();
+            if (val === 'used or new' || val === 'used / new') return false;
+            return true;
+          };
+
+          // 1. Direct real custom field selectors (JomClassifieds / Joomla #fields_45, custom field names, test harness)
           const directSelectors = [
             '#fields_45',
             'input[name="fields[45]"]',
+            'textarea[name="fields[45]"]',
+            'select[name="fields[45]"]',
             '#target_condition_input',
-            'input[name="target_condition_input"]'
+            'input[name="target_condition_input"]',
+            '#target_condition_text',
+            'input[name="target_condition_text"]',
+            'input[name="fields[condition]"]',
+            'textarea[name="fields[condition]"]'
           ];
           for (const sel of directSelectors) {
             try {
               const el = doc.querySelector(sel);
-              if (el && el.tagName === 'INPUT' && el.id !== 'condition' && el.name !== 'condition' && el.type !== 'radio' && el.type !== 'checkbox') {
-                return el;
-              }
+              if (isEligibleSecondCondition(el)) return el;
             } catch (e) {}
           }
 
-          // 2. Scan labels for Condition (ignoring the first #condition control)
-          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          // 2. Semantic label and control-group lookup (find all labels with "Condition", excluding Air Conditioning)
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label, span.hasPopover, div.control-label');
+          const candidateElements = [];
+
           for (const lbl of allLabels) {
-            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/\bcondition\b/i.test(lText)) {
+            const lText = ((lbl.textContent || '') + ' ' + (lbl.getAttribute('title') || '') + ' ' + (lbl.getAttribute('data-content') || '')).replace(/\s+/g, ' ').trim();
+            if (/\bcondition\b/i.test(lText) && !/air[\s-]*condition/i.test(lText)) {
               const forId = lbl.getAttribute('for');
-              if (forId && (forId === 'condition' || forId.toLowerCase().includes('used_or_new'))) {
-                continue; // Skip the first core condition control!
+              if (forId && forId !== 'condition' && !forId.toLowerCase().includes('used')) {
+                const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+                if (isEligibleSecondCondition(el) && !candidateElements.includes(el)) {
+                  candidateElements.push(el);
+                }
               }
-              let inputEl = null;
-              if (forId) {
-                inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+              const inside = lbl.querySelector('input, textarea, select');
+              if (isEligibleSecondCondition(inside) && !candidateElements.includes(inside)) {
+                candidateElements.push(inside);
               }
-              if (!inputEl) {
-                const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
-                if (container) {
-                  const found = container.querySelector('input:not([id="condition"]):not([name="condition"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
-                  if (found && found.id !== 'condition' && found.name !== 'condition') {
-                    inputEl = found;
+              const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item, fieldset, div') || lbl.parentElement;
+              if (container) {
+                const inputs = container.querySelectorAll('input, textarea, select');
+                for (const inp of inputs) {
+                  if (isEligibleSecondCondition(inp) && !candidateElements.includes(inp)) {
+                    candidateElements.push(inp);
                   }
                 }
               }
-              if (inputEl && inputEl.tagName === 'INPUT' && inputEl.id !== 'condition' && inputEl.name !== 'condition') {
-                return inputEl;
-              }
             }
+          }
+
+          if (candidateElements.length > 0) {
+            // Return the first eligible non-first condition element
+            return candidateElements[0];
           }
 
           return null;
         };
 
         const el = findSecondConditionField();
-        if (el && el.tagName === 'INPUT' && el.id !== 'condition' && el.name !== 'condition' && el.type !== 'radio' && el.type !== 'checkbox') {
-          const currentVal = (el.value || '').toLowerCase();
+        if (el) {
+          const currentVal = (el.value || '').trim().toLowerCase();
           const currentId = (el.id || '').toLowerCase();
           const currentName = (el.name || '').toLowerCase();
-          if (!currentVal.includes('used or new') && currentId !== 'condition' && currentName !== 'condition') {
-            el.value = fields.condition;
+          if (currentVal !== 'used or new' && currentId !== 'condition' && currentName !== 'condition') {
+            if (el.tagName === 'SELECT') {
+              let matched = false;
+              for (const opt of el.options) {
+                if (opt.text.toLowerCase().includes(fields.condition.toLowerCase()) || opt.value.toLowerCase().includes(fields.condition.toLowerCase())) {
+                  el.value = opt.value;
+                  matched = true;
+                  break;
+                }
+              }
+              if (!matched && el.options.length > 0) el.selectedIndex = 1;
+            } else {
+              el.value = fields.condition;
+              try {
+                const proto = Object.getPrototypeOf(el);
+                const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                if (desc && desc.set) desc.set.call(el, fields.condition);
+              } catch (e) {}
+            }
             triggerEvents(el);
+            try {
+              const $ = (typeof unsafeWindow !== 'undefined' && unsafeWindow.$) || (typeof window !== 'undefined' && window.$);
+              if ($ && typeof $(el).trigger === 'function') {
+                $(el).trigger('input').trigger('change');
+              }
+            } catch (e) {}
           }
         }
       }
