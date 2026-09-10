@@ -1488,6 +1488,13 @@
                 ? lText.toLowerCase() === targetLabel.toLowerCase()
                 : targetLabel.test(lText);
 
+              if (matches) {
+                // Check if label has a "for" attribute
+                const forId = lbl.getAttribute('for');
+                if (forId) {
+                  const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+                  if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
+                }
                 // Check inside label
                 const inside = lbl.querySelector('textarea, input');
                 if (inside && this.isSafeEditable(inside, identifiers.allowSelect)) return inside;
