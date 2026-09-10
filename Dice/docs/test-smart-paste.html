@@ -366,6 +366,43 @@
         assert(multiSpanLines[2] === 'EBD Electronic Brake Distribution', `Multi-span "EBD Electronic Brake Distribution" spaces preserved (Got: "${multiSpanLines[2]}")`);
         assert(multiSpanLines[3] === 'Radio/CD/MP3', `Multi-span "Radio/CD/MP3" preserved (Got: "${multiSpanLines[3]}")`);
 
+        // Test 8F: Real Firefox Android Regression - 8 Features items separated by newlines
+        const real8ItemsHtml = `
+          <!DOCTYPE html><html><body>
+          <div class="features-wrapper">
+            <h2>Vehicle Features</h2>
+            <div class="features-container">
+              <div class="item-card">Air Conditioning</div>
+              <div class="item-card">Power Steering</div>
+              <div class="item-card">Automatic Brake System</div>
+              <div class="item-card">Radio / CD</div>
+              <div class="item-card">Security System</div>
+              <div class="item-card">Air Bag</div>
+              <div class="item-card">Central Locking</div>
+              <div class="item-card">Electric Windows</div>
+            </div>
+          </div>
+          <div class="vehicle-title">2018 Toyota Corolla 1.6 Quest</div>
+          <div class="description-section"><p>Great daily runner with low mileage.</p></div>
+          </body></html>
+        `;
+        const real8Doc = parser.parseFromString(real8ItemsHtml, 'text/html');
+        const real8Ext = window.CarSourceExtractor.extractFromDocument(real8Doc).normalized;
+        const real8Lines = real8Ext.features.split('\n');
+
+        assert(real8Lines.length === 8, `Extracted exact 8 features from real layout (Got: ${real8Lines.length})`);
+        assert(real8Lines[0] === 'Air Conditioning', `Feature 1 is "Air Conditioning" (Got: "${real8Lines[0]}")`);
+        assert(real8Lines[1] === 'Power Steering', `Feature 2 is "Power Steering" (Got: "${real8Lines[1]}")`);
+        assert(real8Lines[2] === 'Automatic Brake System', `Feature 3 is "Automatic Brake System" (Got: "${real8Lines[2]}")`);
+        assert(real8Lines[3] === 'Radio / CD', `Feature 4 is "Radio / CD" (Got: "${real8Lines[3]}")`);
+        assert(real8Lines[4] === 'Security System', `Feature 5 is "Security System" (Got: "${real8Lines[4]}")`);
+        assert(real8Lines[5] === 'Air Bag', `Feature 6 is "Air Bag" (Got: "${real8Lines[5]}")`);
+        assert(real8Lines[6] === 'Central Locking', `Feature 7 is "Central Locking" (Got: "${real8Lines[6]}")`);
+        assert(real8Lines[7] === 'Electric Windows', `Feature 8 is "Electric Windows" (Got: "${real8Lines[7]}")`);
+        assert(!real8Ext.features.includes('Air ConditioningPower Steering'), 'Features are NOT concatenated without newline');
+        assert(!real8Ext.features.includes('Corolla'), 'Features do NOT contain vehicle title "Corolla"');
+        assert(!real8Ext.features.includes('daily runner'), 'Features do NOT contain description text');
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');
