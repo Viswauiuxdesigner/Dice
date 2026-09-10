@@ -1488,21 +1488,16 @@
                 ? lText.toLowerCase() === targetLabel.toLowerCase()
                 : targetLabel.test(lText);
 
-              if (matches) {
-                // Check if label has a "for" attribute
-                const forId = lbl.getAttribute('for');
-                if (forId) {
-                  const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
-                  if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
-                }
                 // Check inside label
-                const inside = lbl.querySelector('input, textarea');
+                const inside = lbl.querySelector('textarea, input');
                 if (inside && this.isSafeEditable(inside, identifiers.allowSelect)) return inside;
 
-                // Check container/sibling
+                // Check container/sibling (prefer textarea if present)
                 const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
                 if (container) {
-                  const siblingInput = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea');
+                  const siblingTextarea = container.querySelector('textarea');
+                  if (siblingTextarea && this.isSafeEditable(siblingTextarea, identifiers.allowSelect)) return siblingTextarea;
+                  const siblingInput = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
                   if (siblingInput && this.isSafeEditable(siblingInput, identifiers.allowSelect)) return siblingInput;
                 }
               }
@@ -1513,7 +1508,7 @@
         // 3. Name fallback
         if (identifiers.names) {
           for (const name of identifiers.names) {
-            const el = doc.querySelector(`input[name="${name}"], textarea[name="${name}"]`);
+            const el = doc.querySelector(`textarea[name="${name}"], input[name="${name}"]`);
             if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
           }
         }
@@ -1575,18 +1570,18 @@
       if (isClean(fields.fuel)) {
         const el = findFieldElement({
           selectors: ['#target_fuel_input', '#target_fuel', '#fuel', 'input[name="fuel"]', 'input[name="fields[fuel]"]', 'input[name*="fuel"]'],
-          labels: [/^fuel(?:\s+type)?\s*\*?$/i],
+          labels: [/^fuel\s*\*?$/i, /^fuel type\s*\*?$/i],
           names: ['fuel', 'target_fuel']
         });
         if (el) { el.value = fields.fuel; triggerEvents(el); }
       }
 
-      // 7. 4X2 / 4X4
+      // 7. 4x2 / 4x4 (DRIVETRAIN)
       if (isClean(fields.drivetrain)) {
         const el = findFieldElement({
-          selectors: ['#target_drivetrain_input', '#target_drivetrain', '#drivetrain', '#target_4x2_4x4', 'input[name="drivetrain"]', 'input[name="4x2_4x4"]', 'input[name*="drivetrain"]', 'input[name*="4x2"]'],
-          labels: [/^4x2\s*\/\s*4x4\s*\*?$/i, /^4x2\s*\/\s*4x4\s*drivetrain\s*\*?$/i, /^drivetrain\s*\*?$/i],
-          names: ['drivetrain', '4x2_4x4', 'target_drivetrain']
+          selectors: ['#target_drivetrain', '#drivetrain', 'input[name="drivetrain"]', 'input[name="fields[drivetrain]"]', 'input[name*="drivetrain"]', 'input[name*="4x"]'],
+          labels: [/^4x2\s*\/\s*4x4\s*\*?$/i, /^drivetrain\s*\*?$/i],
+          names: ['drivetrain', 'target_drivetrain']
         });
         if (el) { el.value = fields.drivetrain; triggerEvents(el); }
       }
@@ -1594,122 +1589,66 @@
       // 8. BODY COLOUR
       if (isClean(fields.bodyColor)) {
         const el = findFieldElement({
-          selectors: ['#target_body_colour', '#target_body_color', '#body_colour', '#body_color', 'input[name*="body_colour"]', 'input[name*="body_color"]', 'input[name="colour"]', 'input[name="color"]'],
-          labels: [/^body colou?r\s*\*?$/i, /^exterior body colou?r\s*\*?$/i],
+          selectors: ['#target_body_colour', '#target_body_color', '#body_colour', '#body_color', '#colour', '#color', 'input[name="body_colour"]', 'input[name="body_color"]', 'input[name="fields[body_colour]"]', 'input[name*="colour"]', 'input[name*="color"]'],
+          labels: [/^body colou?r\s*\*?$/i, /^colou?r\s*\*?$/i],
           names: ['body_colour', 'body_color', 'target_body_colour']
         });
         if (el) { el.value = fields.bodyColor; triggerEvents(el); }
       }
 
-      // 9. CONDITION (Target SECOND Condition text input ONLY; NEVER touch the first "Used Or New" control)
+      // 9. CONDITION (Target SECOND Condition text input ONLY: #fields_45 / name="fields[45]"; NEVER touch #condition / name="condition")
       if (isClean(fields.condition)) {
         const findSecondConditionField = () => {
-          // Explicit test harness selector
-          const explicitSecond = doc.querySelector('#target_condition_input, input[name="target_condition_input"]');
-          if (explicitSecond && explicitSecond.tagName === 'INPUT' && explicitSecond.type !== 'radio' && explicitSecond.type !== 'checkbox') {
-            return explicitSecond;
+          // 1. Direct real form selector (#fields_45) and test harness selector
+          const directSelectors = [
+            '#fields_45',
+            'input[name="fields[45]"]',
+            '#target_condition_input',
+            'input[name="target_condition_input"]'
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && el.tagName === 'INPUT' && el.id !== 'condition' && el.name !== 'condition' && el.type !== 'radio' && el.type !== 'checkbox') {
+                return el;
+              }
+            } catch (e) {}
           }
 
-          // Gather all inputs associated with "Condition" label in DOM order
-          const conditionCandidates = [];
+          // 2. Scan labels for Condition that explicitly point to fields_45 or a non-condition ID
           const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
-
           for (const lbl of allLabels) {
             const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
             if (/^condition\b/i.test(lText)) {
-              let inputEl = null;
-
-              // 1. Check "for" attribute
               const forId = lbl.getAttribute('for');
+              if (forId && (forId === 'condition' || forId.toLowerCase().includes('used_or_new'))) {
+                continue; // Skip the first condition control!
+              }
+              let inputEl = null;
               if (forId) {
                 inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
               }
-
-              // 2. Check input inside label
-              if (!inputEl) {
-                inputEl = lbl.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
-              }
-
-              // 3. Check container / sibling input
               if (!inputEl) {
                 const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
                 if (container) {
-                  inputEl = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
+                  inputEl = container.querySelector('input:not([id="condition"]):not([name="condition"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
                 }
               }
-
-              if (inputEl && inputEl.tagName === 'INPUT' && !conditionCandidates.includes(inputEl)) {
-                conditionCandidates.push(inputEl);
+              if (inputEl && inputEl.tagName === 'INPUT' && inputEl.id !== 'condition' && inputEl.name !== 'condition') {
+                return inputEl;
               }
             }
-          }
-
-          // Also check custom fields with condition in name/id
-          const directCustomFields = doc.querySelectorAll('input[name*="condition" i], input[name*="Condition"], input[id*="condition" i]');
-          for (const el of directCustomFields) {
-            if (el.tagName === 'INPUT' && el.type !== 'hidden' && el.type !== 'radio' && el.type !== 'checkbox') {
-              if (!conditionCandidates.includes(el)) {
-                conditionCandidates.push(el);
-              }
-            }
-          }
-
-          // Filter out any element that is clearly the FIRST "Used Or New" control
-          const validSecondCandidates = conditionCandidates.filter(el => {
-            if (el.tagName !== 'INPUT') return false;
-            if (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
-
-            const val = (el.value || '').toLowerCase();
-            const placeholder = (el.placeholder || '').toLowerCase();
-            const id = (el.id || '').toLowerCase();
-            const name = (el.name || '').toLowerCase();
-            const container = el.closest('.form-group, .control-group, .demo-form-group, tr, td, div') || el.parentElement;
-            const containerText = (container ? container.textContent : '').toLowerCase();
-
-            // If it explicitly mentions "used or new", it is the first control -> EXCLUDE
-            if (/used\s*(?:or|\/)\s*new/i.test(val) || /used\s*(?:or|\/)\s*new/i.test(placeholder) ||
-                /used\s*(?:or|\/)\s*new/i.test(id) || /used\s*(?:or|\/)\s*new/i.test(name) ||
-                /used_or_new|used-or-new|usedornew|new_or_used/i.test(id) ||
-                /used_or_new|used-or-new|usedornew|new_or_used/i.test(name)) {
-              return false;
-            }
-
-            return true;
-          });
-
-          // If there are multiple candidates, the SECOND one is the intended field in the Ad Details section
-          if (validSecondCandidates.length >= 2) {
-            // Check if one is a custom field `fields[...]`
-            const customField = validSecondCandidates.find(el => /^fields\[/i.test(el.name) || /^fields_/i.test(el.id));
-            if (customField) return customField;
-            // Otherwise take the second in DOM order
-            return validSecondCandidates[1];
-          }
-
-          if (validSecondCandidates.length === 1) {
-            const single = validSecondCandidates[0];
-            // If there were 2 total condition candidates and the first was filtered out or this is the only non-used-or-new candidate
-            if (conditionCandidates.length >= 2 || /^fields\[/i.test(single.name) || /^fields_/i.test(single.id) || single.id === 'target_condition_input') {
-              return single;
-            }
-            // If the single candidate has container text mentioning "Used Or New", fail safely!
-            const cText = (single.closest('.form-group, .control-group, .demo-form-group, div')?.textContent || '').toLowerCase();
-            if (/used\s*(?:or|\/)\s*new/i.test(cText)) {
-              return null; // Fail safely!
-            }
-            return single;
           }
 
           return null;
         };
 
         const el = findSecondConditionField();
-        if (el && el.tagName === 'INPUT' && el.type !== 'radio' && el.type !== 'checkbox') {
-          // Absolute safety check: verify element is NOT the first "Used Or New" control before writing
+        if (el && el.tagName === 'INPUT' && el.id !== 'condition' && el.name !== 'condition' && el.type !== 'radio' && el.type !== 'checkbox') {
           const currentVal = (el.value || '').toLowerCase();
           const currentId = (el.id || '').toLowerCase();
           const currentName = (el.name || '').toLowerCase();
-          if (!currentVal.includes('used or new') && !currentId.includes('used_or_new') && !currentName.includes('used_or_new')) {
+          if (!currentVal.includes('used or new') && currentId !== 'condition' && currentName !== 'condition') {
             el.value = fields.condition;
             triggerEvents(el);
           }
@@ -1736,14 +1675,85 @@
         if (el) { el.value = fields.dealerName; triggerEvents(el); }
       }
 
-      // 12. DEALER ADDRESS (Avoid Contact Address)
+      // 12. DEALER ADDRESS (Target Dealer Address field)
       if (isClean(fields.dealerAddress)) {
         const el = findFieldElement({
           selectors: ['#target_dealer_address', '#dealer_address', 'input[name="dealer_address"]', 'input[name*="dealer_address"]'],
-          labels: [/^dealer address\s*\*?$/i],
+          labels: [/^dealer(?:ship)? address\s*\*?$/i],
           names: ['dealer_address', 'target_dealer_address']
         });
         if (el) { el.value = fields.dealerAddress; triggerEvents(el); }
+      }
+
+      // 12B. CONTACT DETAILS ADDRESS (Overwrites existing default address with dealerAddress)
+      if (isClean(fields.dealerAddress)) {
+        const findContactAddressField = () => {
+          // 1. Direct selectors
+          const directSelectors = [
+            '#target_contact_address',
+            'input[name="target_contact_address"]',
+            'textarea[name="target_contact_address"]',
+            '#contact_address',
+            'input[name="contact_address"]',
+            'textarea[name="contact_address"]',
+            '#contact-address',
+            'textarea[name="address"]',
+            'input[name="address"]',
+            '#address'
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && el.id !== 'target_dealer_address' && el.id !== 'dealer_address' && el.name !== 'dealer_address' && (!el.name || !el.name.includes('dealer_address'))) {
+                return el;
+              }
+            } catch (e) {}
+          }
+
+          // 2. Look inside Contact Details section container
+          const contactSectionHeaders = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, strong, b, .section-title, .panel-title, .control-group')).filter(el => {
+            return /contact\s*(?:details|info|information)?/i.test((el.textContent || '').trim());
+          });
+          for (const header of contactSectionHeaders) {
+            const container = header.closest('.form-section, .panel, .control-group, .form-group, fieldset, div') || header.parentElement;
+            if (container) {
+              const addrEl = container.querySelector('textarea, input[name*="address"], input[id*="address"]');
+              if (addrEl && addrEl.id !== 'target_dealer_address' && addrEl.id !== 'dealer_address' && addrEl.name !== 'dealer_address') {
+                return addrEl;
+              }
+            }
+          }
+
+          // 3. Look for Address label in Contact section or general Address label (distinct from Dealer Address)
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            if (/^(?:contact\s+)?address\s*\*?$/i.test(lText) && !/dealer/i.test(lText)) {
+              const forId = lbl.getAttribute('for');
+              let inputEl = null;
+              if (forId && forId !== 'target_dealer_address' && forId !== 'dealer_address') {
+                inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+              }
+              if (!inputEl) {
+                const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+                if (container) {
+                  inputEl = container.querySelector('textarea, input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
+                }
+              }
+              if (inputEl && inputEl.id !== 'target_dealer_address' && inputEl.id !== 'dealer_address' && inputEl.name !== 'dealer_address') {
+                return inputEl;
+              }
+            }
+          }
+
+          return null;
+        };
+
+        const contactAddrEl = findContactAddressField();
+        if (contactAddrEl && (contactAddrEl.tagName === 'INPUT' || contactAddrEl.tagName === 'TEXTAREA')) {
+          contactAddrEl.value = fields.dealerAddress;
+          triggerEvents(contactAddrEl);
+        }
       }
 
       // 13. DEALER AVERAGE RATING
@@ -1758,21 +1768,52 @@
 
       // 14. FEATURES (Textarea - exact preservation of internal word spacing and newlines)
       if (isClean(fields.features)) {
-        const el = findFieldElement({
-          selectors: [
+        const findFeaturesElement = () => {
+          // Direct textarea selectors
+          const directSelectors = [
             'textarea#target_features_text',
             'textarea#target_features',
             'textarea#features',
             '#target_features_text',
             '#target_features',
             '#features',
+            'textarea[name="target_features_text"]',
+            'textarea[name="target_features"]',
+            'textarea[name="features"]',
             'textarea[name*="features"]',
+            'textarea[name*="feature" i]',
+            'textarea[id*="feature" i]',
             'textarea[name="fields[features]"]',
             'textarea[name="fields[Features]"]'
-          ],
-          labels: [/^features\s*\*?$/i, /^installed features\s*\*?$/i],
-          names: ['features', 'target_features_text', 'target_features']
-        });
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && this.isSafeEditable(el, false)) return el;
+            } catch (e) {}
+          }
+
+          // Label lookup specifically searching for textarea
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            if (/^(?:installed\s+)?features\s*\*?$/i.test(lText)) {
+              const forId = lbl.getAttribute('for');
+              if (forId) {
+                const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+                if (el && this.isSafeEditable(el, false)) return el;
+              }
+              const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+              if (container) {
+                const siblingTextarea = container.querySelector('textarea');
+                if (siblingTextarea && this.isSafeEditable(siblingTextarea, false)) return siblingTextarea;
+              }
+            }
+          }
+          return null;
+        };
+
+        const el = findFeaturesElement();
         if (el) {
           const rawFeaturesText = String(fields.features).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
           el.value = rawFeaturesText;
@@ -1825,9 +1866,13 @@
 
       // Check excluded IDs / names
       const idOrName = `${el.id || ''} ${el.name || ''}`.toLowerCase();
+      if (el.id === 'condition' || el.name === 'condition') {
+        // Exclude the top #condition / name="condition" field
+        return false;
+      }
       const excludedKeywords = [
         'category', 'used_or_new', 'used_cars', 'seat', 'contact_number', 'phone',
-        'currency', 'tag', 'country', 'contact_address'
+        'currency', 'tag', 'country'
       ];
       if (excludedKeywords.some(kw => idOrName.includes(kw))) {
         return false;

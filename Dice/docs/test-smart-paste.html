@@ -131,6 +131,9 @@
         const expectedMazdaFeatures = "Rubber Floor Mats\nRubber Load Space Mat\nOn The Road";
         assert(document.getElementById('target_features_text').value === expectedMazdaFeatures, `Features textarea exact word spacing and newlines preserved (Got: "${document.getElementById('target_features_text').value}")`);
         
+        // FIX 3 TEST: Contact Details Address receives dealerAddress
+        assert(document.getElementById('target_contact_address').value === 'Cape Town, Western Cape', 'Contact Details Address receives Dealer Address value');
+
         // Verify Description rich text iframe
         const descIframe = document.getElementById('description_ifr');
         if (descIframe && descIframe.contentDocument) {
@@ -147,7 +150,6 @@
         assert(document.getElementById('target_currency').value === initCurrency, 'Price currency dropdown UNTOUCHED');
         assert(document.getElementById('target_tags').value === initTags, 'Tags dropdown UNTOUCHED');
         assert(document.getElementById('target_country').value === initCountry, 'Country dropdown UNTOUCHED');
-        assert(document.getElementById('target_contact_address').value === initContactAddress, 'Contact Details Address UNTOUCHED');
 
         log('\n=== TEST 5: CROSS-LISTING STALE-DATA TEST (FERRARI OVERRIDE) ===');
         // Listing A was Mazda. Now user copies Listing B (Ferrari) and pastes on target
@@ -158,6 +160,8 @@
         assert(document.getElementById('target_year').value === '2024', 'Target updated to Listing B Year');
         assert(document.getElementById('target_price').value === '7999000', 'Target updated to Listing B Price (7999000)');
         assert(document.getElementById('target_dealer_name').value === 'Yas Marina', 'Target updated to Listing B Dealer Name');
+        assert(document.getElementById('target_dealer_address').value === 'Sandton, Gauteng', 'Target updated to Listing B Dealer Address');
+        assert(document.getElementById('target_contact_address').value === 'Sandton, Gauteng', 'Target updated to Listing B Contact Address');
         assert(document.getElementById('target_vehicle_highlights').value.includes('4.4 l/100km'), 'Target updated to Listing B Vehicle Highlights');
         assert(!document.getElementById('target_vehicle_title').value.includes('Mazda'), 'No stale Listing A (Mazda) data present');
 
@@ -171,9 +175,13 @@
         window.CarSmartPasteEngine.handlePaste(fakeEvent);
         assert(!intercepted, 'Normal non-payload paste is NOT intercepted or prevented');
 
-        log('\n=== TEST 7: DUAL-CONDITION JOMCLASSIFIEDS DOM ISOLATION TEST ===');
+        log('\n=== TEST 7: EXACT REAL DOM REGRESSION TESTS (A, B, C, D) ===');
+        // TEST A — Dual Condition: #condition with "Used Or New" + #fields_45
+        // TEST B — Features formatting with exact newlines and spaces
+        // TEST C — Contact Address with initial multi-line address overwritten
         const mockDiv = document.createElement('div');
         mockDiv.innerHTML = `
+          <!-- Condition controls -->
           <div class="control-group">
             <label class="control-label">Condition *</label>
             <input type="text" id="condition" name="condition" value="Used Or New">
@@ -182,13 +190,50 @@
             <label for="fields_45" class="control-label">Condition *</label>
             <input type="text" id="fields_45" name="fields[45]" value="">
           </div>
+
+          <!-- Features Textarea -->
+          <div class="control-group">
+            <label for="fields_features" class="control-label">Features</label>
+            <textarea id="fields_features" name="fields[features]"></textarea>
+          </div>
+
+          <!-- Dealer Address -->
+          <div class="control-group">
+            <label for="dealer_address" class="control-label">Dealer Address</label>
+            <input type="text" id="dealer_address" name="dealer_address" value="">
+          </div>
+
+          <!-- Contact Details Section Address -->
+          <div class="contact-details-section">
+            <h4>Contact Details</h4>
+            <div class="control-group">
+              <label for="address" class="control-label">Address</label>
+              <textarea id="address" name="address">5/1452, Palanisamy nagar,\nBoyampalayam,\nTirupur</textarea>
+            </div>
+          </div>
         `;
         document.body.appendChild(mockDiv);
 
-        window.CarSmartPasteEngine.fillTargetForm(mockDiv, { condition: 'Excellent Condition' });
+        const testFeaturesInput = "ABS Brakes\nAir Conditioning\nAirbags\nFull service record";
 
-        assert(mockDiv.querySelector('#condition').value === 'Used Or New', 'JomClassifieds 1st Condition (#condition) remains "Used Or New" UNCHANGED');
-        assert(mockDiv.querySelector('#fields_45').value === 'Excellent Condition', 'JomClassifieds 2nd Condition custom field (#fields_45) receives "Excellent Condition"');
+        window.CarSmartPasteEngine.fillTargetForm(mockDiv, {
+          condition: 'Excellent Condition',
+          features: testFeaturesInput,
+          dealerAddress: 'Pretoria, Gauteng'
+        });
+
+        // TEST A Assertions
+        assert(mockDiv.querySelector('#condition').value === 'Used Or New', 'TEST A: #condition remains "Used Or New" UNCHANGED');
+        assert(mockDiv.querySelector('#fields_45').value === 'Excellent Condition', 'TEST A: #fields_45 populated with "Excellent Condition"');
+
+        // TEST B Assertions
+        assert(mockDiv.querySelector('#fields_features').value === testFeaturesInput, 'TEST B: Features textarea matches EXACT spaces and newlines');
+
+        // TEST C Assertions
+        assert(mockDiv.querySelector('#dealer_address').value === 'Pretoria, Gauteng', 'TEST C: Dealer Address receives "Pretoria, Gauteng"');
+        assert(mockDiv.querySelector('#address').value === 'Pretoria, Gauteng', 'TEST C: Contact Details Address receives "Pretoria, Gauteng"');
+        assert(!mockDiv.querySelector('#address').value.includes('Palanisamy nagar'), 'TEST C: Old initial user address is completely overwritten');
+
         document.body.removeChild(mockDiv);
 
         log('\n========================================');
