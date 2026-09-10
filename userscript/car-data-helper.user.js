@@ -701,83 +701,102 @@
         }
       }
 
-      // --- 14. FEATURES (Discrete Structural Grid & Item Extractor) ---
+      // --- 14. FEATURES (Strict Section-Scoped Item Extractor) ---
       let featuresList = [];
 
       // 1. Check Next.js state props
-      if (Array.isArray(nextDataProps.features)) {
+      if (Array.isArray(nextDataProps.features) && nextDataProps.features.length > 0) {
         featuresList = nextDataProps.features.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
-      } else if (Array.isArray(nextDataProps.vehicleFeatures)) {
+      } else if (Array.isArray(nextDataProps.vehicleFeatures) && nextDataProps.vehicleFeatures.length > 0) {
         featuresList = nextDataProps.vehicleFeatures.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
-      } else if (Array.isArray(nextDataProps.equipment)) {
+      } else if (Array.isArray(nextDataProps.equipment) && nextDataProps.equipment.length > 0) {
         featuresList = nextDataProps.equipment.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
       } else if (typeof nextDataProps.features === 'string' && nextDataProps.features.includes('\n')) {
         featuresList = nextDataProps.features.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
       }
 
-      // 2. DOM Structural Extraction
+      // 2. DOM Structural Extraction (strictly scoped to Features section)
       if (!featuresList || featuresList.length === 0) {
-        const allHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, div, span'));
-        const featureHeading = allHeadings.find(el => {
-          const t = el.textContent.trim();
-          return /^(?:Key\s+|Vehicle\s+|Standard\s+|Installed\s+)?Features(?:\s*&\s*Specs)?$/i.test(t) && el.children.length === 0;
+        // Step A: Find the explicit Features heading element
+        const candidateHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"]'));
+        const featureHeading = candidateHeadings.find(el => {
+          const txt = (el.textContent || '').trim();
+          if (!/^(?:key\s+|vehicle\s+|standard\s+|installed\s+)?features(?:\s*&\s*specs)?$/i.test(txt)) return false;
+          if (el.tagName === 'H1' && /20\d\d|[a-z]{3,}\s+[a-z]{3,}/i.test(txt)) return false;
+          if (el.querySelector('h1, h2, h3, h4, h5, h6')) return false;
+          return true;
         });
 
-        let featuresSection = null;
+        // Step B: Resolve the exact features container without climbing to broad ancestors
+        let featuresContainer = null;
         if (featureHeading) {
-          featuresSection = featureHeading.closest('section, article, [class*="features"], [class*="card"], [class*="section"]') || featureHeading.parentElement?.parentElement || featureHeading.parentElement;
-        }
-        if (!featuresSection) {
-          featuresSection = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, #features, .features-grid, .features-list, .equipment-list, [class*="features-"]');
+          let sib = featureHeading.nextElementSibling;
+          while (sib && /^(?:hr|br|script|style)$/i.test(sib.tagName)) {
+            sib = sib.nextElementSibling;
+          }
+          if (sib && (sib.tagName === 'UL' || sib.tagName === 'OL' || sib.tagName === 'DIV' || sib.tagName === 'SECTION')) {
+            featuresContainer = sib;
+          }
+
+          if (!featuresContainer) {
+            const parent = featureHeading.parentElement;
+            if (parent && !/^(?:body|html|main|article|form)$/i.test(parent.tagName) && !parent.querySelector('h1, [data-test="description"], [class*="seller"], [class*="dealer"]')) {
+              featuresContainer = parent;
+            }
+          }
         }
 
-        if (featuresSection) {
+        if (!featuresContainer) {
+          featuresContainer = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, #features, .features-grid, .features-list, .equipment-list, [class*="features-grid"], [class*="features_grid"], [class*="features-section"]');
+        }
+
+        // Step C: Extract individual repeating items inside the container ONLY
+        if (featuresContainer) {
           const items = [];
           const seen = new Set();
 
           const addFeature = (rawText) => {
-            if (!rawText) return;
+            if (!rawText || typeof rawText !== 'string') return;
             const clean = rawText.replace(/\s+/g, ' ').trim();
-            if (clean && clean.length >= 2 && clean.length <= 100) {
-              if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars)$/i.test(clean)) {
-                if (!seen.has(clean.toLowerCase())) {
-                  seen.add(clean.toLowerCase());
-                  items.push(clean);
+            if (clean && clean.length >= 2 && clean.length <= 60) {
+              if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars|specs)$/i.test(clean)) {
+                if (!/^(?:20\d\d\s+[A-Za-z]+|R\s*[\d\s,.]+|[\d\s]+km)$/i.test(clean)) {
+                  if (!seen.has(clean.toLowerCase())) {
+                    seen.add(clean.toLowerCase());
+                    items.push(clean);
+                  }
                 }
               }
             }
           };
 
-          // Strategy A: Direct list items <li>
-          const listItems = featuresSection.querySelectorAll('li');
+          // Strategy 1: Direct <li> elements
+          const listItems = featuresContainer.querySelectorAll('li');
           if (listItems.length > 0) {
             listItems.forEach(li => addFeature(li.textContent));
           }
 
-          // Strategy B: Dedicated feature item / chip / badge classes
+          // Strategy 2: Dedicated feature class elements
           if (items.length === 0) {
-            const chipItems = featuresSection.querySelectorAll('[class*="feature-item"], [class*="feature_item"], [class*="featureItem"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="tag"]');
-            if (chipItems.length > 0) {
-              chipItems.forEach(chip => addFeature(chip.textContent));
+            const classItems = featuresContainer.querySelectorAll('[class*="feature-item"], [class*="feature_item"], [class*="featureItem"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="tag"]');
+            if (classItems.length > 0) {
+              classItems.forEach(ci => addFeature(ci.textContent));
             }
           }
 
-          // Strategy C: Grid items / Leaf text elements inside features container
+          // Strategy 3: Direct children of the grid/list container (excluding the heading)
           if (items.length === 0) {
-            const allElements = featuresSection.querySelectorAll('*');
-            allElements.forEach(el => {
-              if (el === featureHeading || el.contains(featureHeading)) return;
-              if (/^(?:script|style|svg|path|img|button)$/i.test(el.tagName)) return;
-              const nonIconChildren = Array.from(el.children).filter(c => !/^(?:svg|path|img|i)$/i.test(c.tagName));
-              if (nonIconChildren.length === 0) {
-                const text = el.textContent;
-                if (text && text.includes('\n')) {
-                  text.split('\n').forEach(line => addFeature(line));
+            const children = Array.from(featuresContainer.children).filter(c => c !== featureHeading && !c.contains(featureHeading) && !/^(?:h1|h2|h3|h4|h5|h6|button|script|style|svg)$/i.test(c.tagName));
+            if (children.length >= 2) {
+              children.forEach(child => {
+                const leafEls = Array.from(child.querySelectorAll('*')).filter(el => el.children.length === 0 && !/^(?:svg|path|img|i)$/i.test(el.tagName));
+                if (leafEls.length === 1) {
+                  addFeature(leafEls[0].textContent);
                 } else {
-                  addFeature(text);
+                  addFeature(child.textContent);
                 }
-              }
-            });
+              });
+            }
           }
 
           if (items.length > 0) {

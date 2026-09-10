@@ -293,6 +293,56 @@
         assert(singleCondDiv.querySelector('#condition').value === 'Used Or New', 'Fail-safe: First condition #condition with "Used Or New" remains UNTOUCHED when no second condition field exists');
         document.body.removeChild(singleCondDiv);
 
+        // Test 8C: Cars.co.za Real Volkswagen Caddy Features Isolation Regression
+        const caddyHtml = `
+          <!DOCTYPE html><html><body>
+          <nav class="breadcrumb">
+            <ol><li>Volkswagen</li><li>Caddy</li><li>Panel Van</li></ol>
+          </nav>
+          <h1>2011 Volkswagen Caddy 1.6i Panel Van</h1>
+          <div class="description-section">
+            <h2>Description</h2>
+            <p>Clean commercial van in great condition with low mileage.</p>
+          </div>
+          <div class="features-section">
+            <h3>Features</h3>
+            <div class="features-grid">
+              <div class="item">Air Conditioning</div>
+              <div class="item">Alarm</div>
+              <div class="item">Auxiliary Input</div>
+              <div class="item">Central Locking</div>
+              <div class="item">Manual</div>
+              <div class="item">Power Steering</div>
+              <div class="item">Radio/CD</div>
+            </div>
+          </div>
+          <div class="dealer-info">
+            <h3>Dealer Details</h3>
+            <p>Cape Town Auto</p>
+          </div>
+          </body></html>
+        `;
+        const caddyDoc = parser.parseFromString(caddyHtml, 'text/html');
+        const caddyExt = window.CarSourceExtractor.extractFromDocument(caddyDoc).normalized;
+        const caddyFeatures = caddyExt.features.split('\n');
+
+        assert(caddyFeatures.length === 7, `Extracted exact 7 features from Caddy grid (Got: ${caddyFeatures.length})`);
+        assert(caddyFeatures[0] === 'Air Conditioning', `First feature is "Air Conditioning" (Got: "${caddyFeatures[0]}")`);
+        assert(caddyFeatures[0] !== 'Volkswagen', 'First feature is NOT "Volkswagen"');
+        assert(!caddyExt.features.includes('Volkswagen'), 'Features do NOT contain breadcrumb text "Volkswagen"');
+        assert(!caddyExt.features.includes('Caddy'), 'Features do NOT contain model name "Caddy"');
+        assert(!caddyExt.features.includes('Panel Van'), 'Features do NOT contain derivative "Panel Van"');
+        assert(!caddyExt.features.includes('Clean commercial van'), 'Features do NOT contain description text');
+        assert(caddyFeatures[1] === 'Alarm', 'Feature 2 is "Alarm"');
+        assert(caddyFeatures[5] === 'Power Steering', 'Feature 6 preserves internal space: "Power Steering"');
+        assert(caddyFeatures[6] === 'Radio/CD', 'Feature 7 is "Radio/CD"');
+
+        // Test 8D: Absent Features Section returns empty / Missing
+        const absentFeaturesHtml = `<!DOCTYPE html><html><body><h1>2020 Ford Ranger</h1><div class="description">Only description</div></body></html>`;
+        const absentDoc = parser.parseFromString(absentFeaturesHtml, 'text/html');
+        const absentExt = window.CarSourceExtractor.extractFromDocument(absentDoc).normalized;
+        assert(absentExt.features === '' || absentExt.features === 'Missing / Needs Review', 'Absent features section safely returns empty / missing');
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');
