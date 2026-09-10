@@ -87,11 +87,36 @@ window.CarNormalizers = {
    */
   normalizeFeatures(val) {
     if (!val) return '';
+    const splitConcatenated = (str) => {
+      if (!str || typeof str !== 'string') return [];
+      if (str.includes('\n')) {
+        return str.split(/\r?\n/).map(s => this.cleanText(s)).filter(Boolean);
+      }
+      const cleaned = this.cleanText(str);
+      if (cleaned.length > 30 && (/[a-z0-9][A-Z]/.test(cleaned) || /\b(?:CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)[A-Z][a-z]/.test(cleaned))) {
+        const separated = cleaned
+          .replace(/([a-z0-9])([A-Z])/g, '$1\n$2')
+          .replace(/\b(CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)([A-Z][a-z])/g, '$1\n$2');
+        return separated.split('\n').map(s => this.cleanText(s)).filter(Boolean);
+      }
+      return [cleaned];
+    };
+
     if (Array.isArray(val)) {
-      return val.map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      const result = [];
+      for (const f of val) {
+        const raw = typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f || '');
+        const parts = splitConcatenated(raw);
+        for (const p of parts) {
+          if (p && !result.includes(p)) result.push(p);
+        }
+      }
+      return result.join('\n');
     }
+
     if (typeof val === 'string') {
-      return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      const parts = splitConcatenated(val);
+      return parts.join('\n');
     }
     return '';
   },

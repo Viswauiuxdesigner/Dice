@@ -403,6 +403,24 @@
         assert(!real8Ext.features.includes('Corolla'), 'Features do NOT contain vehicle title "Corolla"');
         assert(!real8Ext.features.includes('daily runner'), 'Features do NOT contain description text');
 
+        // Test 8G: Normalizer Concatenation Safeguard - Merged TitleCase string splitting
+        const mergedString = "Air ConditioningPower SteeringAutomatic Brake SystemRadio / CDSecurity SystemAir BagCentral LockingElectric Windows";
+        const normalizedMerged = (window.CarNormalizers || window.Normalizers).normalizeFeatures(mergedString);
+        const expected8Features = [
+          "Air Conditioning",
+          "Power Steering",
+          "Automatic Brake System",
+          "Radio / CD",
+          "Security System",
+          "Air Bag",
+          "Central Locking",
+          "Electric Windows"
+        ].join('\n');
+
+        assert(normalizedMerged === expected8Features, `Merged string successfully split into exact 8 features (Got:\n"${normalizedMerged}")`);
+        assert(!normalizedMerged.includes('Air ConditioningPower'), 'No merged features in normalized output');
+        assert(normalizedMerged.split('\n').length === 8, 'Exact 8 items produced on separate lines');
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

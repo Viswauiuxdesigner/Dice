@@ -536,12 +536,12 @@ const CarsCoZaAdapter = {
     // --- 14. FEATURES (Strict Section-Scoped Item Extractor) ---
     let featuresList = [];
 
-    // 1. Check Next.js state props
-    if (Array.isArray(nextDataProps.features) && nextDataProps.features.length > 0) {
+    // 1. Check Next.js state props (only accept if array has at least 2 clean items)
+    if (Array.isArray(nextDataProps.features) && nextDataProps.features.length >= 2) {
       featuresList = nextDataProps.features.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
-    } else if (Array.isArray(nextDataProps.vehicleFeatures) && nextDataProps.vehicleFeatures.length > 0) {
+    } else if (Array.isArray(nextDataProps.vehicleFeatures) && nextDataProps.vehicleFeatures.length >= 2) {
       featuresList = nextDataProps.vehicleFeatures.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
-    } else if (Array.isArray(nextDataProps.equipment) && nextDataProps.equipment.length > 0) {
+    } else if (Array.isArray(nextDataProps.equipment) && nextDataProps.equipment.length >= 2) {
       featuresList = nextDataProps.equipment.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
     } else if (typeof nextDataProps.features === 'string' && nextDataProps.features.includes('\n')) {
       featuresList = nextDataProps.features.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
@@ -626,7 +626,20 @@ const CarsCoZaAdapter = {
 
       const addFeature = (rawText) => {
         if (!rawText || typeof rawText !== 'string') return;
-        const lines = rawText.split(/\r?\n/);
+        const splitParts = (str) => {
+          if (!str) return [];
+          if (str.includes('\n')) return str.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          const cln = str.replace(/[ \t]+/g, ' ').trim();
+          if (cln.length > 30 && (/[a-z0-9][A-Z]/.test(cln) || /\b(?:CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)[A-Z][a-z]/.test(cln))) {
+            const sep = cln
+              .replace(/([a-z0-9])([A-Z])/g, '$1\n$2')
+              .replace(/\b(CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)([A-Z][a-z])/g, '$1\n$2');
+            return sep.split('\n').map(s => s.trim()).filter(Boolean);
+          }
+          return [cln];
+        };
+
+        const lines = splitParts(rawText);
         for (const line of lines) {
           const clean = line.replace(/[ \t]+/g, ' ').trim();
           if (clean && clean.length >= 2 && clean.length <= 60) {

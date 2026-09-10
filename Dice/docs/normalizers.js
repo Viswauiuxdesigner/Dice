@@ -87,11 +87,107 @@ window.CarNormalizers = {
    */
   normalizeFeatures(val) {
     if (!val) return '';
+    const splitConcatenated = (str) => {
+      if (!str || typeof str !== 'string') return [];
+      if (str.includes('\n')) {
+        return str.split(/\r?\n/).map(s => this.cleanText(s)).filter(Boolean);
+      }
+      const cleaned = this.cleanText(str);
+      if (cleaned.length > 30 && (/[a-z0-9][A-Z]/.test(cleaned) || /\b(?:CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)[A-Z][a-z]/.test(cleaned))) {
+        const separated = cleaned
+          .replace(/([a-z0-9])([A-Z])/g, '$1\n$2')
+          .replace(/\b(CD|ABS|EBD|ESP|MP3|USB|GPS|AM\/FM|LED|HID|4WD|AWD|FWD|RWD|PDC|TPMS)([A-Z][a-z])/g, '$1\n$2');
+        return separated.split('\n').map(s => this.cleanText(s)).filter(Boolean);
+      }
+      return [cleaned];
+    };
+
     if (Array.isArray(val)) {
-      return val.map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      const result = [];
+      for (const f of val) {
+        const raw = typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f || '');
+        const parts = splitConcatenated(raw);
+        for (const p of parts) {
+          if (p && !result.includes(p)) result.push(p);
+        }
+      }
+      return result.join('\n');
+    }
+
+    if (typeof val === 'string') {
+      const parts = splitConcatenated(val);
+      return parts.join('\n');
+    }
+    return '';
+  },
+
+  /**
+   * Normalize description preserving multi-paragraph breaks (\n\n) without collapsing newlines
+   */
+  normalizeDescription(val) {
+    if (!val || typeof val !== 'string') return '';
+    let text = val
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    // Split on double newlines or blocks
+    const rawParagraphs = text.split(/\n{2,}/);
+    const cleanParagraphs = [];
+
+    for (const rawP of rawParagraphs) {
+      // Within each paragraph, collapse internal single newlines or multiple spaces into a single space
+      const cleanP = rawP
+        .split('\n')
+        .map(line => line.replace(/[ \t]+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (cleanP && !/^(?:seller\s+|dealer\s+|vehicle\s+)?description:?$/i.test(cleanP) && !/^(?:show|read|view)\s*(?:more|less)$/i.test(cleanP)) {
+        cleanParagraphs.push(cleanP);
+      }
+    }
+
+    return cleanParagraphs.join('\n\n');
+  },
+
+  /**
+   * Normalize Vehicle Highlights multi-card text (cards separated by \n\n, fields within card by \n)
+   */
+  normalizeVehicleHighlights(val) {
+    if (!val) return '';
+    if (Array.isArray(val)) {
+      return val.map(item => {
+        if (typeof item === 'string') return this.cleanText(item);
+        if (typeof item === 'object' && item !== null) {
+          const t = item.title || item.heading || item.name || '';
+          const v = item.value || item.metric || item.stat || '';
+          const d = item.description || item.desc || item.detail || item.text || '';
+          return [t, v, d].filter(Boolean).map(s => this.cleanText(s)).join('\n');
+        }
+        return '';
+      }).filter(Boolean).join('\n\n');
     }
     if (typeof val === 'string') {
-      return val.split(/[,;\n]/).map(f => this.cleanText(f)).filter(Boolean).join('\n');
+      const text = val
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+
+      const rawCards = text.split(/\n{2,}/);
+      const cleanCards = [];
+
+      for (const rawCard of rawCards) {
+        const lines = rawCard
+          .split('\n')
+          .map(l => l.replace(/[ \t]+/g, ' ').trim())
+          .filter(l => l.length > 0 && !/^(?:vehicle\s+)?highlights$/i.test(l));
+
+        if (lines.length > 0) {
+          cleanCards.push(lines.join('\n'));
+        }
+      }
+      return cleanCards.join('\n\n');
     }
     return '';
   }
