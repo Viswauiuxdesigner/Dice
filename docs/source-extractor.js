@@ -533,33 +533,133 @@ const CarsCoZaAdapter = {
       }
     }
 
-    // --- 14. FEATURES (Preserved Successful Logic) ---
-    let featuresList = nextDataProps.features || [];
-    if (typeof featuresList === 'string') {
-      featuresList = featuresList.split('\n').map(f => f.trim()).filter(Boolean);
+    // --- 14. FEATURES (Strict Section-Scoped Item Extractor) ---
+    let featuresList = [];
+
+    // 1. Check Next.js state props
+    if (Array.isArray(nextDataProps.features) && nextDataProps.features.length > 0) {
+      featuresList = nextDataProps.features.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+    } else if (Array.isArray(nextDataProps.vehicleFeatures) && nextDataProps.vehicleFeatures.length > 0) {
+      featuresList = nextDataProps.vehicleFeatures.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+    } else if (Array.isArray(nextDataProps.equipment) && nextDataProps.equipment.length > 0) {
+      featuresList = nextDataProps.equipment.map(f => typeof f === 'object' ? (f.name || f.title || f.label || '') : String(f)).filter(Boolean);
+    } else if (typeof nextDataProps.features === 'string' && nextDataProps.features.includes('\n')) {
+      featuresList = nextDataProps.features.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
     }
 
+    // 2. DOM Structural Extraction (strictly scoped to Features section)
     if (!featuresList || featuresList.length === 0) {
-      const featureHeading = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b')).find(el => /^(?:Key\s+|Vehicle\s+|Standard\s+)?Features$/i.test(el.textContent.trim()));
+      // Step A: Find the explicit Features heading element
+      const candidateHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"]'));
+      const featureHeading = candidateHeadings.find(el => {
+        const txt = (el.textContent || '').trim();
+        if (!/^(?:key\s+|vehicle\s+|standard\s+|installed\s+)?features(?:\s*&\s*specs)?$/i.test(txt)) return false;
+        if (el.tagName === 'H1' && /20\d\d|[a-z]{3,}\s+[a-z]{3,}/i.test(txt)) return false;
+        if (el.querySelector('h1, h2, h3, h4, h5, h6')) return false;
+        return true;
+      });
+
+      // Step B: Resolve the exact features container without climbing to broad ancestors
       let featuresContainer = null;
       if (featureHeading) {
-        featuresContainer = featureHeading.closest('div, section, article') || featureHeading.parentElement;
-      } else {
-        featuresContainer = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, .features-grid, .features-list, .equipment-list');
+        let sib = featureHeading.nextElementSibling;
+        while (sib && /^(?:hr|br|script|style)$/i.test(sib.tagName)) {
+          sib = sib.nextElementSibling;
+        }
+        if (sib && (sib.tagName === 'UL' || sib.tagName === 'OL' || sib.tagName === 'DIV' || sib.tagName === 'SECTION')) {
+          featuresContainer = sib;
+        }
+
+        if (!featuresContainer) {
+          const parent = featureHeading.parentElement;
+          if (parent && !/^(?:body|html|main|article|form)$/i.test(parent.tagName) && !parent.querySelector('h1, [data-test="description"], [class*="seller"], [class*="dealer"]')) {
+            featuresContainer = parent;
+          }
+        }
       }
 
+      if (!featuresContainer) {
+        featuresContainer = doc.querySelector('[data-test="features"], [data-testid="features"], #car-features, #features, .features-grid, .features-list, .equipment-list, [class*="features-grid"], [class*="features_grid"], [class*="features-section"]');
+      }
+
+      // Step C: Extract individual repeating items inside the container ONLY
       if (featuresContainer) {
-        const itemEls = featuresContainer.querySelectorAll('li, [class*="feature-item"], [class*="chip"], [class*="tag"], [class*="pill"], div, p');
         const items = [];
-        itemEls.forEach(el => {
-          if (el.children.length <= 1) {
-            const txt = (el.textContent || '').trim();
-            if (txt && txt.length > 1 && txt.length < 80 && !/^(features|key features|show more|view all|read more|back to search|used cars)$/i.test(txt)) {
-              if (!items.includes(txt)) items.push(txt);
+        const seen = new Set();
+
+        // Helper: Extract text while preserving spaces across disjoint child elements/tags
+        const extractItemText = (el) => {
+          if (!el) return '';
+          try {
+            const clone = el.cloneNode(true);
+            const junk = clone.querySelectorAll('script, style, svg, path, img, button');
+            junk.forEach(n => n.remove());
+
+            const textParts = [];
+            const collectText = (node) => {
+              if (node.nodeType === 3) {
+                const val = (node.nodeValue || '').replace(/\s+/g, ' ').trim();
+                if (val) textParts.push(val);
+              } else if (node.nodeType === 1) {
+                for (let child = node.firstChild; child; child = child.nextSibling) {
+                  collectText(child);
+                }
+              }
+            };
+            collectText(clone);
+            if (textParts.length > 0) {
+              return textParts.join(' ').replace(/[ \t]+/g, ' ').trim();
+            }
+          } catch (e) {}
+
+          return (el.textContent || '').replace(/[ \t]+/g, ' ').trim();
+        };
+
+        const addFeature = (rawText) => {
+          if (!rawText || typeof rawText !== 'string') return;
+          const lines = rawText.split(/\r?\n/);
+          for (const line of lines) {
+            const clean = line.replace(/[ \t]+/g, ' ').trim();
+            if (clean && clean.length >= 2 && clean.length <= 60) {
+              if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars|specs)$/i.test(clean)) {
+                if (!/^(?:20\d\d\s+[A-Za-z]+|R\s*[\d\s,.]+|[\d\s]+km)$/i.test(clean)) {
+                  if (!seen.has(clean.toLowerCase())) {
+                    seen.add(clean.toLowerCase());
+                    items.push(clean);
+                  }
+                }
+              }
             }
           }
-        });
-        if (items.length > 0) featuresList = items;
+        };
+
+        // Strategy 1: Direct <li> elements
+        const listItems = featuresContainer.querySelectorAll('li');
+        if (listItems.length > 0) {
+          listItems.forEach(li => addFeature(extractItemText(li)));
+        }
+
+        // Strategy 2: Dedicated feature class elements
+        if (items.length === 0) {
+          const classItems = featuresContainer.querySelectorAll('[class*="feature-item"], [class*="feature_item"], [class*="featureItem"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="tag"]');
+          if (classItems.length > 0) {
+            classItems.forEach(ci => addFeature(extractItemText(ci)));
+          }
+        }
+
+        // Strategy 3: Direct children of the grid/list container (excluding the heading)
+        if (items.length === 0) {
+          const children = Array.from(featuresContainer.children).filter(c => c !== featureHeading && !c.contains(featureHeading) && !/^(?:h1|h2|h3|h4|h5|h6|button|script|style|svg)$/i.test(c.tagName));
+          if (children.length >= 2) {
+            children.forEach(child => {
+              addFeature(extractItemText(child));
+            });
+          }
+        }
+
+        if (items.length > 0) {
+          featuresList = items;
+        }
       }
     }
 

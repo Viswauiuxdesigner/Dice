@@ -343,6 +343,29 @@
         const absentExt = window.CarSourceExtractor.extractFromDocument(absentDoc).normalized;
         assert(absentExt.features === '' || absentExt.features === 'Missing / Needs Review', 'Absent features section safely returns empty / missing');
 
+        // Test 8E: Disjoint multi-span elements preserve internal spaces
+        const multiSpanHtml = `
+          <!DOCTYPE html><html><body>
+          <div class="features-section">
+            <h3>Features</h3>
+            <div class="features-grid">
+              <div class="feature-item"><span>Air</span><span>Conditioning</span></div>
+              <div class="feature-item"><span>Power</span><span>Steering</span></div>
+              <div class="feature-item"><span>EBD</span><span>Electronic</span><span>Brake</span><span>Distribution</span></div>
+              <div class="feature-item"><span>Radio/CD/MP3</span></div>
+            </div>
+          </div>
+          </body></html>
+        `;
+        const multiSpanDoc = parser.parseFromString(multiSpanHtml, 'text/html');
+        const multiSpanExt = window.CarSourceExtractor.extractFromDocument(multiSpanDoc).normalized;
+        const multiSpanLines = multiSpanExt.features.split('\n');
+
+        assert(multiSpanLines[0] === 'Air Conditioning', `Multi-span "Air Conditioning" space preserved (Got: "${multiSpanLines[0]}")`);
+        assert(multiSpanLines[1] === 'Power Steering', `Multi-span "Power Steering" space preserved (Got: "${multiSpanLines[1]}")`);
+        assert(multiSpanLines[2] === 'EBD Electronic Brake Distribution', `Multi-span "EBD Electronic Brake Distribution" spaces preserved (Got: "${multiSpanLines[2]}")`);
+        assert(multiSpanLines[3] === 'Radio/CD/MP3', `Multi-span "Radio/CD/MP3" preserved (Got: "${multiSpanLines[3]}")`);
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

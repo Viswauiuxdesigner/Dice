@@ -755,15 +755,46 @@
           const items = [];
           const seen = new Set();
 
+          // Helper: Extract text while preserving spaces across disjoint child elements/tags
+          const extractItemText = (el) => {
+            if (!el) return '';
+            try {
+              const clone = el.cloneNode(true);
+              const junk = clone.querySelectorAll('script, style, svg, path, img, button');
+              junk.forEach(n => n.remove());
+
+              const textParts = [];
+              const collectText = (node) => {
+                if (node.nodeType === 3) {
+                  const val = (node.nodeValue || '').replace(/\s+/g, ' ').trim();
+                  if (val) textParts.push(val);
+                } else if (node.nodeType === 1) {
+                  for (let child = node.firstChild; child; child = child.nextSibling) {
+                    collectText(child);
+                  }
+                }
+              };
+              collectText(clone);
+              if (textParts.length > 0) {
+                return textParts.join(' ').replace(/[ \t]+/g, ' ').trim();
+              }
+            } catch (e) {}
+
+            return (el.textContent || '').replace(/[ \t]+/g, ' ').trim();
+          };
+
           const addFeature = (rawText) => {
             if (!rawText || typeof rawText !== 'string') return;
-            const clean = rawText.replace(/\s+/g, ' ').trim();
-            if (clean && clean.length >= 2 && clean.length <= 60) {
-              if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars|specs)$/i.test(clean)) {
-                if (!/^(?:20\d\d\s+[A-Za-z]+|R\s*[\d\s,.]+|[\d\s]+km)$/i.test(clean)) {
-                  if (!seen.has(clean.toLowerCase())) {
-                    seen.add(clean.toLowerCase());
-                    items.push(clean);
+            const lines = rawText.split(/\r?\n/);
+            for (const line of lines) {
+              const clean = line.replace(/[ \t]+/g, ' ').trim();
+              if (clean && clean.length >= 2 && clean.length <= 60) {
+                if (!/^(?:features|key features|vehicle features|standard features|show more|show less|view all|view less|read more|read less|back to search|used cars|specs)$/i.test(clean)) {
+                  if (!/^(?:20\d\d\s+[A-Za-z]+|R\s*[\d\s,.]+|[\d\s]+km)$/i.test(clean)) {
+                    if (!seen.has(clean.toLowerCase())) {
+                      seen.add(clean.toLowerCase());
+                      items.push(clean);
+                    }
                   }
                 }
               }
@@ -773,14 +804,14 @@
           // Strategy 1: Direct <li> elements
           const listItems = featuresContainer.querySelectorAll('li');
           if (listItems.length > 0) {
-            listItems.forEach(li => addFeature(li.textContent));
+            listItems.forEach(li => addFeature(extractItemText(li)));
           }
 
           // Strategy 2: Dedicated feature class elements
           if (items.length === 0) {
             const classItems = featuresContainer.querySelectorAll('[class*="feature-item"], [class*="feature_item"], [class*="featureItem"], [class*="chip"], [class*="pill"], [class*="badge"], [class*="tag"]');
             if (classItems.length > 0) {
-              classItems.forEach(ci => addFeature(ci.textContent));
+              classItems.forEach(ci => addFeature(extractItemText(ci)));
             }
           }
 
@@ -789,12 +820,7 @@
             const children = Array.from(featuresContainer.children).filter(c => c !== featureHeading && !c.contains(featureHeading) && !/^(?:h1|h2|h3|h4|h5|h6|button|script|style|svg)$/i.test(c.tagName));
             if (children.length >= 2) {
               children.forEach(child => {
-                const leafEls = Array.from(child.querySelectorAll('*')).filter(el => el.children.length === 0 && !/^(?:svg|path|img|i)$/i.test(el.tagName));
-                if (leafEls.length === 1) {
-                  addFeature(leafEls[0].textContent);
-                } else {
-                  addFeature(child.textContent);
-                }
+                addFeature(extractItemText(child));
               });
             }
           }
