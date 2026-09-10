@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Paste Automated Test Suite</title>
+</head>
+<body>
+  <h1>Smart Paste Automated Test Suite</h1>
+  <pre id="test-results" style="font-family:monospace; background:#0f172a; color:#f8fafc; padding:16px; border-radius:8px;">Running tests...</pre>
+
+  <div id="target-form-container" style="display:none;"></div>
+
+  <script src="normalizers.js"></script>
+  <script src="validators.js"></script>
+  <script src="source-extractor.js"></script>
+  <script src="../userscript/car-data-helper.user.js"></script>
+
+  <script>
+    async function runSuite() {
+      const logs = [];
+      const log = (msg) => {
+        logs.push(msg);
+        document.getElementById('test-results').textContent = logs.join('\n');
+      };
+
+      const assert = (cond, msg) => {
+        if (!cond) {
+          log(`FAILED: ${msg}`);
+          throw new Error(msg);
+        } else {
+          log(`PASSED: ${msg}`);
+        }
+      };
+
+      try {
+        log('=== TEST 1: v2.2.4 EXTRACTION INTEGRITY ON 4 LISTINGS ===');
+        const parser = new DOMParser();
+
+        const [ferrariHtml, mazdaHtml, suzukiHtml, bmwHtml, targetHtml] = await Promise.all([
+          fetch('cars-co-za-ferrari-sample.html').then(r => r.text()),
+          fetch('cars-co-za-sample.html').then(r => r.text()),
+          fetch('cars-co-za-suzuki-sample.html').then(r => r.text()),
+          fetch('cars-co-za-bmw-sample.html').then(r => r.text()),
+          fetch('dummy-target.html').then(r => r.text())
+        ]);
+
+        const fDoc = parser.parseFromString(ferrariHtml, 'text/html');
+        const mDoc = parser.parseFromString(mazdaHtml, 'text/html');
+        const sDoc = parser.parseFromString(suzukiHtml, 'text/html');
+        const bDoc = parser.parseFromString(bmwHtml, 'text/html');
+
+        const fExt = window.CarSourceExtractor.extractFromDocument(fDoc).normalized;
+        assert(fExt.title === '2024 Ferrari 296', `Ferrari title matches (Got: "${fExt.title}")`);
+        assert(fExt.titleDescription === 'GTB', `Ferrari title description matches (Got: "${fExt.titleDescription}")`);
+        assert(fExt.price === '7 999 000', `Ferrari price matches (Got: "${fExt.price}")`);
+        assert(fExt.vehicleHighlights && fExt.vehicleHighlights.includes('4.4 l/100km'), 'Ferrari vehicle highlights matches');
+
+        const mExt = window.CarSourceExtractor.extractFromDocument(mDoc).normalized;
+        assert(mExt.title === '2019 Mazda 2', `Mazda title matches (Got: "${mExt.title}")`);
+        assert(mExt.dealerName === 'SMG JETOUR Harbour Arch', `Mazda dealer name matches (Got: "${mExt.dealerName}")`);
+        assert(mExt.dealerAddress === 'Cape Town, Western Cape', `Mazda dealer address matches (Got: "${mExt.dealerAddress}")`);
+
+        const sExt = window.CarSourceExtractor.extractFromDocument(sDoc).normalized;
+        assert(sExt.title === '2023 Suzuki Celerio', `Suzuki title matches (Got: "${sExt.title}")`);
+        assert(sExt.dealerName === 'Suzuki Vredenburg', `Suzuki dealer name matches (Got: "${sExt.dealerName}")`);
+
+        const bExt = window.CarSourceExtractor.extractFromDocument(bDoc).normalized;
+        assert(bExt.title === '2023 BMW M3', `BMW title matches (Got: "${bExt.title}")`);
+        assert(bExt.price === '1 899 000', `BMW price matches (Got: "${bExt.price}")`);
+
+        log('\n=== TEST 2: STRUCTURED SMART COPY PAYLOAD GENERATION ===');
+        const buildPayload = (data, url) => ({
+          marker: 'CAR_DATA_ENTRY_HELPER',
+          version: 1,
+          source: 'cars.co.za',
+          sourceUrl: url,
+          fields: data
+        });
+
+        const mazdaPayload = buildPayload(mExt, mExt.sourceUrl || 'https://www.cars.co.za/for-sale/used/2019-Mazda-2-1.5-Dynamic-Auto-5-dr-Western-Cape-Cape-Town/11223434/');
+        assert(mazdaPayload.marker === 'CAR_DATA_ENTRY_HELPER', 'Payload marker valid');
+        assert(mazdaPayload.version === 1, 'Payload version valid');
+        assert(mazdaPayload.fields.title === '2019 Mazda 2', 'Payload title valid');
+        assert(mazdaPayload.fields.titleDescription === '1.5 Dynamic Auto 5-dr', 'Payload title description valid');
+        assert(mazdaPayload.fields.dealerName === 'SMG JETOUR Harbour Arch', 'Payload dealer name valid');
+        assert(mazdaPayload.fields.dealerAddress === 'Cape Town, Western Cape', 'Payload dealer address valid');
+
+        log('\n=== TEST 3: SINGLE-PASTE TARGET FORM POPULATION (MAZDA) ===');
+        // Mount dummy-target.html into DOM container
+        const targetContainer = document.getElementById('target-form-container');
+        targetContainer.innerHTML = targetHtml;
+        targetContainer.style.display = 'block';
+
+        const initCategory = document.getElementById('target_category').value;
+        const initCarsParts = document.getElementById('target_cars_parts').value;
+        const initUsedCarsSa = document.getElementById('target_used_cars_sa').value;
+        const initUsedOrNew = document.getElementById('target_used_or_new').value;
+        const initSeats = document.getElementById('target_seats').value;
+        const initContactNum = document.getElementById('target_contact_number').value;
+        const initCurrency = document.getElementById('target_currency').value;
+        const initTags = document.getElementById('target_tags').value;
+        const initCountry = document.getElementById('target_country').value;
+        const initContactAddress = document.getElementById('target_contact_address').value;
+
+        // Perform Smart Paste on Target Form
+        window.CarSmartPasteEngine.fillTargetForm(document, mazdaPayload.fields);
+
+        // Verify all 18 mapped fields
+        assert(document.getElementById('target_vehicle_title').value === '2019 Mazda 2', 'Target Title populated');
+        assert(document.getElementById('target_title_description').value === '1.5 Dynamic Auto 5-dr', 'Target Title Description populated');
+        assert(document.getElementById('target_year').value === '2019', 'Target Year populated');
+        assert(document.getElementById('target_kilometers_driven').value === '75 743 km', 'Target Kilometers Driven populated');
+        assert(document.getElementById('target_transmission').value === 'Automatic', 'Target Transmission populated');
+        assert(document.getElementById('target_fuel').value === 'Petrol', 'Target Fuel populated');
+        assert(document.getElementById('target_drivetrain').value === '4x2', 'Target 4x2/4x4 populated');
+        assert(document.getElementById('target_body_colour').value === 'White', 'Target Body Colour populated');
+        assert(document.getElementById('target_condition_input').value === 'Excellent Condition', 'Target Condition populated');
+        assert(document.getElementById('target_pricing_summary').value === 'R 249 900 Est. R 4 456 p/m', 'Target Pricing Summary populated');
+        assert(document.getElementById('target_dealer_name').value === 'SMG JETOUR Harbour Arch', 'Target Dealer Name populated');
+        assert(document.getElementById('target_dealer_address').value === 'Cape Town, Western Cape', 'Target Dealer Address populated');
+        assert(document.getElementById('target_dealer_rating').value === '4.2 (322 Reviews)', 'Target Dealer Rating populated');
+        assert(document.getElementById('target_price').value === '249900', 'Target Price formatted to pure digits');
+        assert(document.getElementById('target_source_url').value.includes('11223434'), 'Target Source URL populated');
+        assert(document.getElementById('target_features_text').value.includes('Rubber Floor Mats'), 'Target Features populated');
+        assert(document.getElementById('target_vehicle_highlights').value.includes('Fuel Efficiency'), 'Target Vehicle Highlights populated');
+        assert(document.getElementById('target_description').value.includes('Introducing the stylish'), 'Target Description populated');
+        
+        // Verify Description rich text iframe
+        const descIframe = document.getElementById('description_ifr');
+        if (descIframe && descIframe.contentDocument) {
+          assert(descIframe.contentDocument.body.innerHTML.includes('<p>Introducing the stylish'), 'Target Description rich text iframe formatted with clean paragraphs');
+        }
+
+        log('\n=== TEST 4: EXCLUDED CONTROLS PROTECTION ===');
+        assert(document.getElementById('target_category').value === initCategory, 'Category dropdown UNTOUCHED');
+        assert(document.getElementById('target_cars_parts').value === initCarsParts, 'Cars-Parts dropdown UNTOUCHED');
+        assert(document.getElementById('target_used_cars_sa').value === initUsedCarsSa, 'Used cars in SA dropdown UNTOUCHED');
+        assert(document.getElementById('target_used_or_new').value === initUsedOrNew, 'Used Or New control UNTOUCHED');
+        assert(document.getElementById('target_seats').value === initSeats, 'Seats field UNTOUCHED');
+        assert(document.getElementById('target_contact_number').value === initContactNum, 'Contact Number UNTOUCHED');
+        assert(document.getElementById('target_currency').value === initCurrency, 'Price currency dropdown UNTOUCHED');
+        assert(document.getElementById('target_tags').value === initTags, 'Tags dropdown UNTOUCHED');
+        assert(document.getElementById('target_country').value === initCountry, 'Country dropdown UNTOUCHED');
+        assert(document.getElementById('target_contact_address').value === initContactAddress, 'Contact Details Address UNTOUCHED');
+
+        log('\n=== TEST 5: CROSS-LISTING STALE-DATA TEST (FERRARI OVERRIDE) ===');
+        // Listing A was Mazda. Now user copies Listing B (Ferrari) and pastes on target
+        const ferrariPayload = buildPayload(fExt, fExt.sourceUrl || 'https://www.cars.co.za/for-sale/used/2024-Ferrari-296-GTB-Gauteng-Sandton/11223378/');
+        window.CarSmartPasteEngine.fillTargetForm(document, ferrariPayload.fields);
+
+        assert(document.getElementById('target_vehicle_title').value === '2024 Ferrari 296', 'Target updated to Listing B (Ferrari) Title');
+        assert(document.getElementById('target_year').value === '2024', 'Target updated to Listing B Year');
+        assert(document.getElementById('target_price').value === '7999000', 'Target updated to Listing B Price (7999000)');
+        assert(document.getElementById('target_dealer_name').value === 'Yas Marina', 'Target updated to Listing B Dealer Name');
+        assert(document.getElementById('target_vehicle_highlights').value.includes('4.4 l/100km'), 'Target updated to Listing B Vehicle Highlights');
+        assert(!document.getElementById('target_vehicle_title').value.includes('Mazda'), 'No stale Listing A (Mazda) data present');
+
+        log('\n=== TEST 6: NORMAL PASTE PASSTHROUGH ===');
+        let intercepted = false;
+        const fakeEvent = {
+          clipboardData: { getData: () => 'Hello plain text note' },
+          preventDefault: () => { intercepted = true; },
+          stopPropagation: () => { intercepted = true; }
+        };
+        window.CarSmartPasteEngine.handlePaste(fakeEvent);
+        assert(!intercepted, 'Normal non-payload paste is NOT intercepted or prevented');
+
+        log('\n========================================');
+        log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
+        log('========================================');
+      } catch (err) {
+        log(`\nTEST SUITE FAILED: ${err.message}`);
+      }
+    }
+
+    runSuite();
+  </script>
+</body>
+</html>

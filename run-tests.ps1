@@ -38,4 +38,12 @@ if ($bmwRaw -match '<pre id="bmw-out"[^>]*>([\s\S]*?)</pre>') {
     Write-Output "BMW json not found in output"
 }
 
-
+Write-Output "`n=== TESTING SMART PASTE SUITE (ONE-PASTE, FORM FILL, EXCLUSIONS, STALE DATA) ==="
+$p4 = Start-Process -FilePath 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ArgumentList '--headless', '--dump-dom', '--allow-file-access-from-files', '--virtual-time-budget=4000', 'file:///C:/Dice/docs/test-smart-paste.html' -NoNewWindow -PassThru -RedirectStandardOutput 'smart-paste-out.html'
+$p4.WaitForExit(10000)
+$spRaw = Get-Content 'smart-paste-out.html' -Raw
+if ($spRaw -match '<pre id="test-results"[^>]*>([\s\S]*?)</pre>') {
+    Write-Output $matches[1]
+} else {
+    Write-Output "Smart Paste results not found in output"
+}

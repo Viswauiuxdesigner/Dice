@@ -10,148 +10,201 @@
 
   <div class="demo-card">
     <div style="border-bottom:2px solid #e2e8f0; padding-bottom:12px; margin-bottom:20px;">
-      <h2 style="color:#0f172a; margin:0;">Legacy Vehicle Intake Portal</h2>
-      <p style="color:#64748b; font-size:0.85rem;">Target form simulating internal legacy inventory entry system.</p>
+      <h2 style="color:#0f172a; margin:0;">Legacy Vehicle Intake Portal (Ad Details Form)</h2>
+      <p style="color:#64748b; font-size:0.85rem;">Target form simulating internal legacy inventory entry system with 18 mapped fields and excluded controls.</p>
     </div>
 
     <!-- Alert Banner -->
     <div style="background:#fffbe6; border:1px solid #ffe58f; padding:10px 14px; border-radius:6px; margin-bottom:20px; font-size:0.85rem; color:#873800;">
-      ⚠️ <strong>Manual Review Required:</strong> Auto-filling places values into target fields for review. You must inspect all fields and manually click <strong>Submit Inventory Record</strong>.
+      ⚠️ <strong>Smart Paste Active:</strong> Tap any editable input and paste your copied listing payload to automatically populate all 18 mapped fields.
     </div>
 
     <form id="legacy-vehicle-form" onsubmit="event.preventDefault(); alert('Form Submitted Manually by User! Inventory record saved.');">
 
+      <!-- EXCLUDED CONTROLS SECTION (Must NEVER be touched by Smart Paste) -->
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:20px;">
+        <h4 style="margin:0 0 10px 0; color:#475569; font-size:0.9rem;">Manually Handled Controls (Never modified by Smart Paste)</h4>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+          <div class="demo-form-group">
+            <label for="target_category">Category *</label>
+            <select id="target_category" name="target_category" class="demo-control">
+              <option value="Vehicles" selected>Vehicles</option>
+              <option value="Property">Property</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_cars_parts">Cars - Parts *</label>
+            <select id="target_cars_parts" name="target_cars_parts" class="demo-control">
+              <option value="Cars" selected>Cars</option>
+              <option value="Parts">Parts</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_used_cars_sa">Used cars in South Africa *</label>
+            <select id="target_used_cars_sa" name="target_used_cars_sa" class="demo-control">
+              <option value="All South Africa" selected>All South Africa</option>
+              <option value="Western Cape">Western Cape</option>
+              <option value="Gauteng">Gauteng</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_used_or_new">Used Or New (Default Control) *</label>
+            <select id="target_used_or_new" name="target_used_or_new" class="demo-control">
+              <option value="Used" selected>Used</option>
+              <option value="New">New</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_seats">Seats</label>
+            <input type="text" id="target_seats" name="target_seats" class="demo-control" value="5">
+          </div>
+          <div class="demo-form-group">
+            <label for="target_contact_number">Contact Number</label>
+            <input type="text" id="target_contact_number" name="target_contact_number" class="demo-control" value="0821234567">
+          </div>
+          <div class="demo-form-group">
+            <label for="target_currency">Price Currency</label>
+            <select id="target_currency" name="target_currency" class="demo-control">
+              <option value="ZAR" selected>ZAR (R)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_tags">Tag Dropdown</label>
+            <select id="target_tags" name="target_tags" class="demo-control">
+              <option value="Featured" selected>Featured</option>
+              <option value="Standard">Standard</option>
+            </select>
+          </div>
+          <div class="demo-form-group">
+            <label for="target_country">Country / Location Dropdown</label>
+            <select id="target_country" name="target_country" class="demo-control">
+              <option value="South Africa" selected>South Africa</option>
+            </select>
+          </div>
+          <div class="demo-form-group" style="grid-column: span 3;">
+            <label for="target_contact_address">Contact Details Address</label>
+            <input type="text" id="target_contact_address" name="target_contact_address" class="demo-control" value="Manual Contact Address">
+          </div>
+        </div>
+      </div>
+
+      <!-- 18 MAPPED TARGET FIELDS -->
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-        <div class="demo-form-group" style="grid-column: span 2;">
-          <label for="target_vehicle_title">Vehicle Title / Full Name *</label>
-          <input type="text" id="target_vehicle_title" name="target_vehicle_title" class="demo-control" placeholder="e.g. 2019 BMW X1 sDrive20i" required>
-        </div>
-
+        
+        <!-- 1. Title -->
         <div class="demo-form-group">
-          <label for="target_year">Year of Manufacture *</label>
-          <input type="number" id="target_year" name="target_year" class="demo-control" placeholder="e.g. 2019" min="1900" max="2030" required>
+          <label for="target_vehicle_title">Title *</label>
+          <input type="text" id="target_vehicle_title" name="target_vehicle_title" class="demo-control" placeholder="e.g. 2019 BMW X1" required>
         </div>
 
+        <!-- 2. Title Description -->
         <div class="demo-form-group">
-          <label for="target_mileage">Odometer Mileage (km) *</label>
-          <input type="number" id="target_mileage" name="target_mileage" class="demo-control" placeholder="e.g. 125000" required>
+          <label for="target_title_description">Title Description</label>
+          <input type="text" id="target_title_description" name="target_title_description" class="demo-control" placeholder="e.g. sDrive20i xLine">
         </div>
 
+        <!-- 3. Year -->
         <div class="demo-form-group">
-          <label for="target_price">Listing Price (ZAR) *</label>
-          <input type="number" id="target_price" name="target_price" class="demo-control" placeholder="e.g. 349900" required>
+          <label for="target_year">Year *</label>
+          <input type="text" id="target_year" name="target_year" class="demo-control" placeholder="e.g. 2019" required>
         </div>
 
+        <!-- 4. Kilometers Driven -->
+        <div class="demo-form-group">
+          <label for="target_kilometers_driven">Kilometers Driven *</label>
+          <input type="text" id="target_kilometers_driven" name="target_kilometers_driven" class="demo-control" placeholder="e.g. 125 000 km" required>
+        </div>
+
+        <!-- 5. Transmission -->
         <div class="demo-form-group">
           <label for="target_transmission">Transmission *</label>
-          <select id="target_transmission" name="target_transmission" class="demo-control">
-            <option value="">-- Select Transmission --</option>
-            <option value="Automatic">Automatic</option>
-            <option value="Manual">Manual</option>
-            <option value="Semi-Automatic">Semi-Automatic</option>
-          </select>
+          <input type="text" id="target_transmission" name="target_transmission" class="demo-control" placeholder="e.g. Automatic">
         </div>
 
+        <!-- 6. Fuel -->
         <div class="demo-form-group">
-          <label for="target_fuel">Fuel Type *</label>
-          <select id="target_fuel" name="target_fuel" class="demo-control">
-            <option value="">-- Select Fuel --</option>
-            <option value="Petrol">Petrol</option>
-            <option value="Diesel">Diesel</option>
-            <option value="Hybrid">Hybrid</option>
-            <option value="Electric">Electric</option>
-          </select>
+          <label for="target_fuel">Fuel *</label>
+          <input type="text" id="target_fuel" name="target_fuel" class="demo-control" placeholder="e.g. Petrol">
         </div>
 
+        <!-- 7. 4x2 / 4x4 -->
         <div class="demo-form-group">
-          <label for="target_drivetrain">Drivetrain</label>
-          <select id="target_drivetrain" name="target_drivetrain" class="demo-control">
-            <option value="">-- Select Drivetrain --</option>
-            <option value="FWD">FWD</option>
-            <option value="RWD">RWD</option>
-            <option value="AWD/4WD">AWD/4WD</option>
-          </select>
+          <label for="target_drivetrain">4x2 / 4x4</label>
+          <input type="text" id="target_drivetrain" name="target_drivetrain" class="demo-control" placeholder="e.g. 4x2">
         </div>
 
+        <!-- 8. Body colour -->
         <div class="demo-form-group">
-          <label for="target_body_colour">Exterior Body Colour</label>
-          <input type="text" id="target_body_colour" name="target_body_colour" class="demo-control" placeholder="e.g. Alpine White">
+          <label for="target_body_colour">Body colour</label>
+          <input type="text" id="target_body_colour" name="target_body_colour" class="demo-control" placeholder="e.g. White">
         </div>
 
+        <!-- 9. Condition (Separate editable condition input, NOT Used Or New) -->
         <div class="demo-form-group">
-          <label for="target_engine_capacity">Engine Capacity</label>
-          <input type="text" id="target_engine_capacity" name="target_engine_capacity" class="demo-control" placeholder="e.g. 2.0L Turbo">
+          <label for="target_condition_input">Condition</label>
+          <input type="text" id="target_condition_input" name="target_condition_input" class="demo-control" placeholder="e.g. Excellent condition">
         </div>
 
+        <!-- 10. pricing Summary -->
         <div class="demo-form-group">
-          <label for="target_vin">VIN / Stock No.</label>
-          <input type="text" id="target_vin" name="target_vin" class="demo-control" placeholder="e.g. WBA31AA050...">
+          <label for="target_pricing_summary">pricing Summary</label>
+          <input type="text" id="target_pricing_summary" name="target_pricing_summary" class="demo-control" placeholder="e.g. R 249 900 Est. R 4 456 p/m">
         </div>
 
+        <!-- 11. Dealer Name -->
         <div class="demo-form-group">
-          <label for="target_service_history">Service History</label>
-          <select id="target_service_history" name="target_service_history" class="demo-control">
-            <option value="">-- Select Service Record --</option>
-            <option value="Full Service History with BMW">Full Agent Service History</option>
-            <option value="Full Service History">Full Service History</option>
-            <option value="Partial Service History">Partial Service History</option>
-            <option value="No History">No History</option>
-          </select>
+          <label for="target_dealer_name">Dealer Name</label>
+          <input type="text" id="target_dealer_name" name="target_dealer_name" class="demo-control" placeholder="e.g. SMG JETOUR Harbour Arch">
         </div>
 
+        <!-- 12. Dealer Address -->
+        <div class="demo-form-group">
+          <label for="target_dealer_address">Dealer Address</label>
+          <input type="text" id="target_dealer_address" name="target_dealer_address" class="demo-control" placeholder="e.g. Cape Town, Western Cape">
+        </div>
+
+        <!-- 13. Dealer average rating -->
+        <div class="demo-form-group">
+          <label for="target_dealer_rating">Dealer average rating</label>
+          <input type="text" id="target_dealer_rating" name="target_dealer_rating" class="demo-control" placeholder="e.g. 4.2 (322 Reviews)">
+        </div>
+
+        <!-- 17. Price (pure numeric digits) -->
+        <div class="demo-form-group">
+          <label for="target_price">Price *</label>
+          <input type="text" id="target_price" name="target_price" class="demo-control" placeholder="e.g. 249900" required>
+        </div>
+
+        <!-- 15. Source Link -->
         <div class="demo-form-group" style="grid-column: span 2;">
-          <label>Condition Status</label>
-          <div class="radio-group">
-            <label class="radio-item"><input type="radio" name="target_condition" value="Used"> Used</label>
-            <label class="radio-item"><input type="radio" name="target_condition" value="Certified Pre-Owned"> Certified Pre-Owned</label>
-            <label class="radio-item"><input type="radio" name="target_condition" value="New"> New</label>
-          </div>
-        </div>
-
-        <div class="demo-form-group">
-          <label for="target_dealer_name">Dealership Name</label>
-          <input type="text" id="target_dealer_name" name="target_dealer_name" class="demo-control" placeholder="e.g. Autohaus Sandton">
-        </div>
-
-        <div class="demo-form-group">
-          <label for="target_dealer_rating">Dealer Rating (1-5)</label>
-          <input type="number" id="target_dealer_rating" name="target_dealer_rating" class="demo-control" step="0.1" min="1" max="5">
-        </div>
-
-        <div class="demo-form-group" style="grid-column: span 2;">
-          <label for="target_location">Location / Region</label>
-          <input type="text" id="target_location" name="target_location" class="demo-control" placeholder="e.g. Sandton, Johannesburg">
-        </div>
-
-        <div class="demo-form-group" style="grid-column: span 2;">
-          <label>Installed Features (Check all that apply)</label>
-          <div class="checkbox-group">
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Sunroof"> Sunroof</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Leather Seats"> Leather Seats</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Navigation System"> Navigation System</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Park Distance Control (PDC)"> Park Distance Control (PDC)</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="LED Headlights"> LED Headlights</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Bluetooth Connectivity"> Bluetooth</label>
-            <label class="checkbox-item"><input type="checkbox" name="target_features[]" value="Towbar"> Towbar</label>
-          </div>
-        </div>
-
-        <div class="demo-form-group" style="grid-column: span 2;">
-          <label for="target_source_url">Source Listing Link</label>
+          <label for="target_source_url">Source Link</label>
           <input type="url" id="target_source_url" name="target_source_url" class="demo-control" placeholder="https://www.cars.co.za/...">
         </div>
 
+        <!-- 14. Features (Textarea) -->
         <div class="demo-form-group" style="grid-column: span 2;">
-          <label for="target_description">Vehicle Detailed Description</label>
-          <textarea id="target_description" name="target_description" class="demo-control" rows="4" placeholder="Enter detailed vehicle notes..."></textarea>
+          <label for="target_features_text">Features</label>
+          <textarea id="target_features_text" name="target_features_text" class="demo-control" rows="4" placeholder="Newline-separated features list..."></textarea>
+        </div>
+
+        <!-- 16. Vehicle Highlights (Textarea) -->
+        <div class="demo-form-group" style="grid-column: span 2;">
+          <label for="target_vehicle_highlights">Vehicle Highlights</label>
+          <textarea id="target_vehicle_highlights" name="target_vehicle_highlights" class="demo-control" rows="4" placeholder="Vehicle Highlights cards..."></textarea>
+        </div>
+
+        <!-- 18. Description (Rich Text Editor / Textarea) -->
+        <div class="demo-form-group" style="grid-column: span 2;">
+          <label for="target_description">Description</label>
+          <div style="margin-bottom:6px; font-size:0.8rem; color:#64748b;">Rich Text / TinyMCE Simulated Editor Area:</div>
+          <textarea id="target_description" name="target_description" class="demo-control" rows="5" placeholder="Enter detailed vehicle notes..."></textarea>
+          <iframe id="description_ifr" style="width:100%; height:120px; border:1px solid #cbd5e1; border-radius:6px; margin-top:6px; background:#ffffff;"></iframe>
         </div>
       </div>
 
       <!-- Action buttons -->
-      <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
-        <button type="button" onclick="loadAndFillFromStorage()" class="btn btn-secondary" style="padding:8px 14px;">
-          📥 Load Saved Extracted Data & Fill
-        </button>
+      <div style="margin-top:20px; display:flex; justify-content:flex-end; align-items:center;">
         <button type="submit" class="btn btn-success" style="padding:10px 24px; font-size:1rem;">
           ✅ Submit Inventory Record (Manual Action Only)
         </button>
@@ -159,22 +212,16 @@
     </form>
   </div>
 
-  <script src="normalizers.js"></script>
-  <script src="validators.js"></script>
-  <script src="field-mapping.js"></script>
-  <script src="storage-manager.js"></script>
-  <script src="target-filler.js"></script>
+  <script src="../userscript/car-data-helper.user.js"></script>
   <script>
-    function loadAndFillFromStorage() {
-      const data = window.CarStorageManager.getExtractedData();
-      if (!data) {
-        alert('No extracted data found in local storage! Extract data from dummy-source.html first.');
-        return;
+    // Initialize iframe body for simulated TinyMCE editor
+    window.addEventListener('load', () => {
+      const ifr = document.getElementById('description_ifr');
+      if (ifr && ifr.contentDocument) {
+        ifr.contentDocument.designMode = 'on';
+        ifr.contentDocument.body.innerHTML = '<p style="color:#94a3b8; font-family:sans-serif; font-size:13px;">Simulated TinyMCE editor body ready.</p>';
       }
-      const mapping = window.CarStorageManager.getMapping();
-      const res = window.CarTargetFiller.fillForm(document, data, mapping);
-      alert(`Target Form Filled!\n- Successfully Filled: ${res.results.filled.length} fields\n- Missing/Skipped: ${res.results.skippedMissing.length} fields\n- Failed: ${res.results.failed.length} fields`);
-    }
+    });
   </script>
 </body>
 </html>

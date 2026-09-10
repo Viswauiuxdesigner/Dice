@@ -1285,7 +1285,33 @@
     };
 
     panel.querySelector('#car-panel-copy-all').onclick = (e) => {
-      const jsonStr = JSON.stringify(currentExtractedData, null, 2);
+      const payload = {
+        marker: 'CAR_DATA_ENTRY_HELPER',
+        version: 1,
+        source: 'cars.co.za',
+        sourceUrl: currentExtractedData.sourceUrl || window.location.href,
+        fields: {
+          title: currentExtractedData.title || '',
+          titleDescription: currentExtractedData.titleDescription || '',
+          year: currentExtractedData.year || '',
+          kilometersDriven: currentExtractedData.kilometersDriven || '',
+          transmission: currentExtractedData.transmission || '',
+          fuel: currentExtractedData.fuel || '',
+          drivetrain: currentExtractedData.drivetrain || '',
+          bodyColor: currentExtractedData.bodyColor || '',
+          condition: currentExtractedData.condition || '',
+          pricingSummary: currentExtractedData.pricingSummary || '',
+          dealerName: currentExtractedData.dealerName || '',
+          dealerAddress: currentExtractedData.dealerAddress || '',
+          averageRating: currentExtractedData.averageRating || '',
+          features: currentExtractedData.features || '',
+          description: currentExtractedData.description || '',
+          vehicleHighlights: currentExtractedData.vehicleHighlights || '',
+          price: currentExtractedData.price || '',
+          sourceUrl: currentExtractedData.sourceUrl || window.location.href
+        }
+      };
+      const jsonStr = JSON.stringify(payload, null, 2);
       copyToClipboard(jsonStr, e.target);
     };
 
@@ -1378,11 +1404,388 @@
     }, 100);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  // --- 5. SMART PASTE ENGINE (Silent Background Transport Layer) ---
+  const SmartPasteEngine = {
+    init() {
+      if (window.__carSmartPasteInitialized) return;
+      window.__carSmartPasteInitialized = true;
+      document.addEventListener('paste', this.handlePaste.bind(this), true);
+    },
+
+    handlePaste(e) {
+      let text = '';
+      try {
+        if (e.clipboardData) {
+          text = e.clipboardData.getData('text/plain') || e.clipboardData.getData('text');
+        } else if (window.clipboardData) {
+          text = window.clipboardData.getData('Text');
+        }
+      } catch (err) {
+        return;
+      }
+
+      if (!text || typeof text !== 'string') return;
+      const trimmed = text.trim();
+
+      // Fast check for marker
+      if (!trimmed.startsWith('{') || !trimmed.includes('CAR_DATA_ENTRY_HELPER')) {
+        // Normal paste - DO NOT intercept, DO NOT preventDefault, DO NOT stopPropagation
+        return;
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(trimmed);
+      } catch (err) {
+        return;
+      }
+
+      if (!payload || payload.marker !== 'CAR_DATA_ENTRY_HELPER' || !payload.fields) {
+        return;
+      }
+
+      // Intercept our Smart Paste payload
+      e.preventDefault();
+      e.stopPropagation();
+
+      this.fillTargetForm(document, payload.fields);
+    },
+
+    fillTargetForm(doc, fields) {
+      if (!doc || !fields) return;
+
+      const triggerEvents = (el) => {
+        try {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+        } catch (err) {}
+      };
+
+      const isClean = (v) => {
+        if (v == null) return false;
+        const s = String(v).trim();
+        return s !== '' && s !== 'Missing / Needs Review';
+      };
+
+      // Helper to find input/textarea by exact semantic criteria
+      const findFieldElement = (identifiers) => {
+        // 1. Direct selector match
+        for (const sel of identifiers.selectors || []) {
+          try {
+            const el = doc.querySelector(sel);
+            if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
+          } catch (e) {}
+        }
+
+        // 2. Label match
+        if (identifiers.labels && identifiers.labels.length > 0) {
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            for (const targetLabel of identifiers.labels) {
+              const matches = typeof targetLabel === 'string'
+                ? lText.toLowerCase() === targetLabel.toLowerCase()
+                : targetLabel.test(lText);
+
+              if (matches) {
+                // Check if label has a "for" attribute
+                const forId = lbl.getAttribute('for');
+                if (forId) {
+                  const el = doc.getElementById(forId);
+                  if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
+                }
+                // Check inside label
+                const inside = lbl.querySelector('input, textarea');
+                if (inside && this.isSafeEditable(inside, identifiers.allowSelect)) return inside;
+
+                // Check container/sibling
+                const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+                if (container) {
+                  const siblingInput = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea');
+                  if (siblingInput && this.isSafeEditable(siblingInput, identifiers.allowSelect)) return siblingInput;
+                }
+              }
+            }
+          }
+        }
+
+        // 3. Name fallback
+        if (identifiers.names) {
+          for (const name of identifiers.names) {
+            const el = doc.querySelector(`input[name="${name}"], textarea[name="${name}"]`);
+            if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
+          }
+        }
+
+        return null;
+      };
+
+      // 1. TITLE
+      if (isClean(fields.title)) {
+        const el = findFieldElement({
+          selectors: ['#target_vehicle_title', '#target_title', '#title', 'input[name="title"]', 'input[name="advert_title"]', 'input[name="target_vehicle_title"]'],
+          labels: [/^title\s*\*?$/i, /^vehicle title\s*(?:\/\s*full name)?\s*\*?$/i],
+          names: ['title', 'advert_title', 'target_vehicle_title']
+        });
+        if (el) { el.value = fields.title; triggerEvents(el); }
+      }
+
+      // 2. TITLE DESCRIPTION
+      if (isClean(fields.titleDescription)) {
+        const el = findFieldElement({
+          selectors: ['#target_title_description', '#title_description', 'input[name="title_description"]', 'input[name="fields[title_description]"]', 'input[name*="title_description"]'],
+          labels: [/^title description\s*\*?$/i],
+          names: ['title_description', 'target_title_description']
+        });
+        if (el) { el.value = fields.titleDescription; triggerEvents(el); }
+      }
+
+      // 3. YEAR
+      if (isClean(fields.year)) {
+        const el = findFieldElement({
+          selectors: ['#target_year', '#year', 'input[name="year"]', 'input[name="fields[year]"]', 'input[name*="year"]', 'input[name="target_year"]'],
+          labels: [/^year\s*\*?$/i, /^year of manufacture\s*\*?$/i],
+          names: ['year', 'target_year']
+        });
+        if (el) { el.value = fields.year; triggerEvents(el); }
+      }
+
+      // 4. KILOMETERS DRIVEN
+      if (isClean(fields.kilometersDriven)) {
+        const el = findFieldElement({
+          selectors: ['#target_kilometers_driven', '#target_mileage', '#kilometers_driven', '#mileage', 'input[name="kilometers_driven"]', 'input[name="mileage"]', 'input[name*="kilometer"]', 'input[name="target_mileage"]'],
+          labels: [/^kilometers driven\s*\*?$/i, /^odometer mileage\s*(?:\(km\))?\s*\*?$/i, /^mileage\s*\*?$/i],
+          names: ['kilometers_driven', 'mileage', 'target_mileage']
+        });
+        if (el) { el.value = fields.kilometersDriven; triggerEvents(el); }
+      }
+
+      // 5. TRANSMISSION
+      if (isClean(fields.transmission)) {
+        const el = findFieldElement({
+          selectors: ['#target_transmission_input', '#target_transmission', '#transmission', 'input[name="transmission"]', 'input[name="fields[transmission]"]', 'input[name*="transmission"]'],
+          labels: [/^transmission\s*\*?$/i],
+          names: ['transmission', 'target_transmission']
+        });
+        if (el) { el.value = fields.transmission; triggerEvents(el); }
+      }
+
+      // 6. FUEL
+      if (isClean(fields.fuel)) {
+        const el = findFieldElement({
+          selectors: ['#target_fuel_input', '#target_fuel', '#fuel', 'input[name="fuel"]', 'input[name="fields[fuel]"]', 'input[name*="fuel"]'],
+          labels: [/^fuel(?:\s+type)?\s*\*?$/i],
+          names: ['fuel', 'target_fuel']
+        });
+        if (el) { el.value = fields.fuel; triggerEvents(el); }
+      }
+
+      // 7. 4X2 / 4X4
+      if (isClean(fields.drivetrain)) {
+        const el = findFieldElement({
+          selectors: ['#target_drivetrain_input', '#target_drivetrain', '#drivetrain', '#target_4x2_4x4', 'input[name="drivetrain"]', 'input[name="4x2_4x4"]', 'input[name*="drivetrain"]', 'input[name*="4x2"]'],
+          labels: [/^4x2\s*\/\s*4x4\s*\*?$/i, /^4x2\s*\/\s*4x4\s*drivetrain\s*\*?$/i, /^drivetrain\s*\*?$/i],
+          names: ['drivetrain', '4x2_4x4', 'target_drivetrain']
+        });
+        if (el) { el.value = fields.drivetrain; triggerEvents(el); }
+      }
+
+      // 8. BODY COLOUR
+      if (isClean(fields.bodyColor)) {
+        const el = findFieldElement({
+          selectors: ['#target_body_colour', '#target_body_color', '#body_colour', '#body_color', 'input[name*="body_colour"]', 'input[name*="body_color"]', 'input[name="colour"]', 'input[name="color"]'],
+          labels: [/^body colou?r\s*\*?$/i, /^exterior body colou?r\s*\*?$/i],
+          names: ['body_colour', 'body_color', 'target_body_colour']
+        });
+        if (el) { el.value = fields.bodyColor; triggerEvents(el); }
+      }
+
+      // 9. CONDITION (Explicitly avoid "Used Or New")
+      if (isClean(fields.condition)) {
+        const el = findFieldElement({
+          selectors: ['#target_condition_input', '#target_condition', '#condition', 'input[name="condition"]', 'input[name="fields[condition]"]'],
+          labels: [/^condition\s*\*?$/i, /^condition status\s*\*?$/i],
+          names: ['condition', 'target_condition_input']
+        });
+        if (el) { el.value = fields.condition; triggerEvents(el); }
+      }
+
+      // 10. PRICING SUMMARY
+      if (isClean(fields.pricingSummary)) {
+        const el = findFieldElement({
+          selectors: ['#target_pricing_summary', '#pricing_summary', '#price_summary', 'input[name*="pricing_summary"]', 'input[name*="price_summary"]'],
+          labels: [/^pricing summary\s*\*?$/i],
+          names: ['pricing_summary', 'target_pricing_summary']
+        });
+        if (el) { el.value = fields.pricingSummary; triggerEvents(el); }
+      }
+
+      // 11. DEALER NAME
+      if (isClean(fields.dealerName)) {
+        const el = findFieldElement({
+          selectors: ['#target_dealer_name', '#dealer_name', 'input[name*="dealer_name"]'],
+          labels: [/^dealer(?:ship)? name\s*\*?$/i],
+          names: ['dealer_name', 'target_dealer_name']
+        });
+        if (el) { el.value = fields.dealerName; triggerEvents(el); }
+      }
+
+      // 12. DEALER ADDRESS (Avoid Contact Address)
+      if (isClean(fields.dealerAddress)) {
+        const el = findFieldElement({
+          selectors: ['#target_dealer_address', '#dealer_address', 'input[name="dealer_address"]', 'input[name*="dealer_address"]'],
+          labels: [/^dealer address\s*\*?$/i],
+          names: ['dealer_address', 'target_dealer_address']
+        });
+        if (el) { el.value = fields.dealerAddress; triggerEvents(el); }
+      }
+
+      // 13. DEALER AVERAGE RATING
+      if (isClean(fields.averageRating)) {
+        const el = findFieldElement({
+          selectors: ['#target_dealer_rating', '#dealer_rating', '#average_rating', 'input[name*="dealer_rating"]', 'input[name*="average_rating"]'],
+          labels: [/^dealer (?:average )?rating\s*(?:\(1-5\))?\s*\*?$/i, /^average rating\s*\*?$/i, /^dealer average rating\s*\*?$/i],
+          names: ['dealer_rating', 'average_rating', 'target_dealer_rating']
+        });
+        if (el) { el.value = fields.averageRating; triggerEvents(el); }
+      }
+
+      // 14. FEATURES (Textarea)
+      if (isClean(fields.features)) {
+        const el = findFieldElement({
+          selectors: ['#target_features_text', '#target_features', '#features', 'textarea[name*="features"]', 'textarea#features'],
+          labels: [/^features\s*\*?$/i, /^installed features\s*\*?$/i],
+          names: ['features', 'target_features_text']
+        });
+        if (el) { el.value = fields.features; triggerEvents(el); }
+      }
+
+      // 15. SOURCE LINK
+      if (isClean(fields.sourceUrl)) {
+        const el = findFieldElement({
+          selectors: ['#target_source_url', '#target_source_link', '#source_url', '#source_link', 'input[name*="source_link"]', 'input[name*="source_url"]'],
+          labels: [/^source link\s*\*?$/i, /^source listing link\s*\*?$/i, /^source url\s*\*?$/i],
+          names: ['source_link', 'source_url', 'target_source_url']
+        });
+        if (el) { el.value = fields.sourceUrl; triggerEvents(el); }
+      }
+
+      // 16. VEHICLE HIGHLIGHTS (Textarea)
+      if (isClean(fields.vehicleHighlights)) {
+        const el = findFieldElement({
+          selectors: ['#target_vehicle_highlights', '#vehicle_highlights', 'textarea[name*="vehicle_highlights"]', 'textarea[name*="highlights"]'],
+          labels: [/^vehicle highlights\s*\*?$/i, /^highlights\s*\*?$/i],
+          names: ['vehicle_highlights', 'target_vehicle_highlights']
+        });
+        if (el) { el.value = fields.vehicleHighlights; triggerEvents(el); }
+      }
+
+      // 17. PRICE (Numeric digits only)
+      if (isClean(fields.price)) {
+        const digitsOnly = String(fields.price).replace(/[^\d]/g, '');
+        const el = findFieldElement({
+          selectors: ['#target_price', '#price', 'input[name="price"]', 'input[name*="listing_price"]'],
+          labels: [/^price\s*\*?$/i, /^listing price\s*(?:\(zar\))?\s*\*?$/i],
+          names: ['price', 'target_price']
+        });
+        if (el && digitsOnly) { el.value = digitsOnly; triggerEvents(el); }
+      }
+
+      // 18. DESCRIPTION (Rich text editor / TinyMCE / textarea)
+      if (isClean(fields.description)) {
+        this.fillDescription(doc, fields.description);
+      }
+    },
+
+    isSafeEditable(el, allowSelect) {
+      if (!el) return false;
+      const tag = el.tagName ? el.tagName.toUpperCase() : '';
+      if (tag === 'SELECT' && !allowSelect) return false;
+      if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+
+      // Check excluded IDs / names
+      const idOrName = `${el.id || ''} ${el.name || ''}`.toLowerCase();
+      const excludedKeywords = [
+        'category', 'used_or_new', 'used_cars', 'seat', 'contact_number', 'phone',
+        'currency', 'tag', 'country', 'contact_address'
+      ];
+      if (excludedKeywords.some(kw => idOrName.includes(kw))) {
+        return false;
+      }
+
+      return true;
+    },
+
+    fillDescription(doc, text) {
+      const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+      const htmlContent = paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('');
+
+      // 1. Check TinyMCE instances
+      try {
+        if (typeof window.tinymce !== 'undefined' && window.tinymce.get) {
+          const editor = window.tinymce.get('description') ||
+                         window.tinymce.get('target_description') ||
+                         window.tinymce.activeEditor;
+          if (editor && !editor.isHidden()) {
+            editor.setContent(htmlContent);
+            editor.save();
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // 2. Check Joomla editor instance
+      try {
+        if (typeof window.Joomla !== 'undefined' && window.Joomla.editors?.instances?.description) {
+          window.Joomla.editors.instances.description.setValue(htmlContent);
+          return;
+        }
+      } catch (e) {}
+
+      // 3. Check TinyMCE / Rich Text iframe
+      try {
+        const iframe = doc.querySelector('#description_ifr, iframe[id*="description"], .tox-edit-area iframe, .mce-edit-area iframe');
+        if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+          iframe.contentDocument.body.innerHTML = htmlContent;
+          iframe.contentDocument.body.dispatchEvent(new Event('input', { bubbles: true }));
+          iframe.contentDocument.body.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      } catch (e) {}
+
+      // 4. Target Textarea / Input
+      const textarea = doc.querySelector('#target_description, #description, textarea[name="description"], textarea[name*="description"]');
+      if (textarea) {
+        textarea.value = text;
+        try {
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          textarea.dispatchEvent(new Event('change', { bubbles: true }));
+          textarea.dispatchEvent(new Event('blur', { bubbles: true }));
+        } catch (e) {}
+      }
+    }
+  };
+
+  // Expose SmartPasteEngine and CarsCoZaAdapter for testing harnesses
+  if (typeof window !== 'undefined') {
+    window.CarSmartPasteEngine = SmartPasteEngine;
+    window.CarsCoZaAdapter = CarsCoZaAdapter;
+    window.CarDataHelperNormalizers = Normalizers;
+    window.CarDataHelperValidators = Validators;
+  }
+
+  // Active initialization
+  SmartPasteEngine.init();
+
+  const isSourceListing = CarsCoZaAdapter.canHandle(document);
+  if (isSourceListing) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(createHelperPanel, 300);
+      });
+    } else {
       setTimeout(createHelperPanel, 300);
-    });
-  } else {
-    setTimeout(createHelperPanel, 300);
+    }
   }
 })();
