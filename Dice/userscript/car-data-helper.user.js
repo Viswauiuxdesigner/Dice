@@ -1622,23 +1622,26 @@
             } catch (e) {}
           }
 
-          // 2. Scan labels for Condition that explicitly point to fields_45 or a non-condition ID
+          // 2. Scan labels for Condition (ignoring the first #condition control)
           const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
           for (const lbl of allLabels) {
             const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/^condition\b/i.test(lText)) {
+            if (/\bcondition\b/i.test(lText)) {
               const forId = lbl.getAttribute('for');
               if (forId && (forId === 'condition' || forId.toLowerCase().includes('used_or_new'))) {
-                continue; // Skip the first condition control!
+                continue; // Skip the first core condition control!
               }
               let inputEl = null;
               if (forId) {
                 inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
               }
               if (!inputEl) {
-                const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+                const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
                 if (container) {
-                  inputEl = container.querySelector('input:not([id="condition"]):not([name="condition"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
+                  const found = container.querySelector('input:not([id="condition"]):not([name="condition"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
+                  if (found && found.id !== 'condition' && found.name !== 'condition') {
+                    inputEl = found;
+                  }
                 }
               }
               if (inputEl && inputEl.tagName === 'INPUT' && inputEl.id !== 'condition' && inputEl.name !== 'condition') {
@@ -1666,7 +1669,7 @@
       if (isClean(fields.pricingSummary)) {
         const el = findFieldElement({
           selectors: ['#target_pricing_summary', '#pricing_summary', '#price_summary', 'input[name*="pricing_summary"]', 'input[name*="price_summary"]'],
-          labels: [/^pricing summary\s*\*?$/i],
+          labels: [/^pricing summary\s*\*?$/i, /\bpricing\s+summary\b/i],
           names: ['pricing_summary', 'target_pricing_summary']
         });
         if (el) { el.value = fields.pricingSummary; triggerEvents(el); }
@@ -1676,7 +1679,7 @@
       if (isClean(fields.dealerName)) {
         const el = findFieldElement({
           selectors: ['#target_dealer_name', '#dealer_name', 'input[name*="dealer_name"]'],
-          labels: [/^dealer(?:ship)? name\s*\*?$/i],
+          labels: [/^dealer(?:ship)? name\s*\*?$/i, /\bdealer(?:ship)?\s+name\b/i],
           names: ['dealer_name', 'target_dealer_name']
         });
         if (el) { el.value = fields.dealerName; triggerEvents(el); }
@@ -1686,7 +1689,7 @@
       if (isClean(fields.dealerAddress)) {
         const el = findFieldElement({
           selectors: ['#target_dealer_address', '#dealer_address', 'input[name="dealer_address"]', 'input[name*="dealer_address"]'],
-          labels: [/^dealer(?:ship)? address\s*\*?$/i],
+          labels: [/^dealer(?:ship)? address\s*\*?$/i, /\bdealer(?:ship)?\s+address\b/i],
           names: ['dealer_address', 'target_dealer_address']
         });
         if (el) { el.value = fields.dealerAddress; triggerEvents(el); }
@@ -1735,14 +1738,14 @@
           const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
           for (const lbl of allLabels) {
             const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/^(?:contact\s+)?address\s*\*?$/i.test(lText) && !/dealer/i.test(lText)) {
+            if (/\b(?:contact\s+)?address\b/i.test(lText) && !/dealer/i.test(lText)) {
               const forId = lbl.getAttribute('for');
               let inputEl = null;
               if (forId && forId !== 'target_dealer_address' && forId !== 'dealer_address') {
                 inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
               }
               if (!inputEl) {
-                const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+                const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
                 if (container) {
                   inputEl = container.querySelector('textarea, input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
                 }
@@ -1767,7 +1770,7 @@
       if (isClean(fields.averageRating)) {
         const el = findFieldElement({
           selectors: ['#target_dealer_rating', '#dealer_rating', '#average_rating', 'input[name*="dealer_rating"]', 'input[name*="average_rating"]'],
-          labels: [/^dealer (?:average )?rating\s*(?:\(1-5\))?\s*\*?$/i, /^average rating\s*\*?$/i, /^dealer average rating\s*\*?$/i],
+          labels: [/^dealer (?:average )?rating\s*(?:\(1-5\))?\s*\*?$/i, /^average rating\s*\*?$/i, /\bdealer\s+(?:average\s+)?rating\b/i],
           names: ['dealer_rating', 'average_rating', 'target_dealer_rating']
         });
         if (el) { el.value = fields.averageRating; triggerEvents(el); }
@@ -1776,22 +1779,17 @@
       // 14. FEATURES (Textarea - exact preservation of internal word spacing and newlines)
       if (isClean(fields.features)) {
         const findFeaturesElement = () => {
-          // Direct textarea selectors
+          // Direct textarea selectors & placeholder matches
           const directSelectors = [
             'textarea#target_features_text',
             'textarea#target_features',
             'textarea#features',
-            '#target_features_text',
-            '#target_features',
-            '#features',
             'textarea[name="target_features_text"]',
             'textarea[name="target_features"]',
             'textarea[name="features"]',
-            'textarea[name*="features"]',
-            'textarea[name*="feature" i]',
-            'textarea[id*="feature" i]',
-            'textarea[name="fields[features]"]',
-            'textarea[name="fields[Features]"]'
+            'textarea[placeholder*="feature" i]',
+            'textarea[placeholder*="Minimum 3 features" i]',
+            'textarea[placeholder*="minimum 3 features" i]'
           ];
           for (const sel of directSelectors) {
             try {
@@ -1800,17 +1798,17 @@
             } catch (e) {}
           }
 
-          // Label lookup specifically searching for textarea
+          // Semantic label lookup specifically searching for textarea associated with "Features"
           const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
           for (const lbl of allLabels) {
             const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/^(?:installed\s+)?features\s*\*?$/i.test(lText)) {
+            if (/\bfeatures\b/i.test(lText)) {
               const forId = lbl.getAttribute('for');
               if (forId) {
                 const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
                 if (el && this.isSafeEditable(el, false)) return el;
               }
-              const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+              const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
               if (container) {
                 const siblingTextarea = container.querySelector('textarea');
                 if (siblingTextarea && this.isSafeEditable(siblingTextarea, false)) return siblingTextarea;
@@ -1832,20 +1830,54 @@
       if (isClean(fields.sourceUrl)) {
         const el = findFieldElement({
           selectors: ['#target_source_url', '#target_source_link', '#source_url', '#source_link', 'input[name*="source_link"]', 'input[name*="source_url"]'],
-          labels: [/^source link\s*\*?$/i, /^source listing link\s*\*?$/i, /^source url\s*\*?$/i],
+          labels: [/^source link\s*\*?$/i, /^source listing link\s*\*?$/i, /\bsource\s+(?:listing\s+)?link\b/i, /\bsource\s+url\b/i],
           names: ['source_link', 'source_url', 'target_source_url']
         });
         if (el) { el.value = fields.sourceUrl; triggerEvents(el); }
       }
 
-      // 16. VEHICLE HIGHLIGHTS (Textarea)
+      // 16. VEHICLE HIGHLIGHTS (Textarea - receives ONLY Vehicle Highlights data)
       if (isClean(fields.vehicleHighlights)) {
-        const el = findFieldElement({
-          selectors: ['#target_vehicle_highlights', '#vehicle_highlights', 'textarea[name*="vehicle_highlights"]', 'textarea[name*="highlights"]'],
-          labels: [/^vehicle highlights\s*\*?$/i, /^highlights\s*\*?$/i],
-          names: ['vehicle_highlights', 'target_vehicle_highlights']
-        });
-        if (el) { el.value = fields.vehicleHighlights; triggerEvents(el); }
+        const findVehicleHighlightsElement = () => {
+          // Direct textarea selectors
+          const directSelectors = [
+            'textarea#target_vehicle_highlights',
+            'textarea#vehicle_highlights',
+            'textarea[name="target_vehicle_highlights"]',
+            'textarea[name="vehicle_highlights"]'
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && this.isSafeEditable(el, false)) return el;
+            } catch (e) {}
+          }
+
+          // Semantic label lookup specifically searching for textarea associated with "Vehicle Highlights"
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            if (/\b(?:vehicle\s+|key\s+|car\s+)?highlights\b/i.test(lText)) {
+              const forId = lbl.getAttribute('for');
+              if (forId) {
+                const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+                if (el && this.isSafeEditable(el, false)) return el;
+              }
+              const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
+              if (container) {
+                const siblingTextarea = container.querySelector('textarea');
+                if (siblingTextarea && this.isSafeEditable(siblingTextarea, false)) return siblingTextarea;
+              }
+            }
+          }
+          return null;
+        };
+
+        const el = findVehicleHighlightsElement();
+        if (el) {
+          el.value = fields.vehicleHighlights;
+          triggerEvents(el);
+        }
       }
 
       // 17. PRICE (Numeric digits only)
@@ -1853,13 +1885,13 @@
         const digitsOnly = String(fields.price).replace(/[^\d]/g, '');
         const el = findFieldElement({
           selectors: ['#target_price', '#price', 'input[name="price"]', 'input[name*="listing_price"]'],
-          labels: [/^price\s*\*?$/i, /^listing price\s*(?:\(zar\))?\s*\*?$/i],
+          labels: [/^price\s*\*?$/i, /^listing price\s*(?:\(zar\))?\s*\*?$/i, /\b(?:listing\s+)?price\b/i],
           names: ['price', 'target_price']
         });
         if (el && digitsOnly) { el.value = digitsOnly; triggerEvents(el); }
       }
 
-      // 18. DESCRIPTION (Rich text editor / TinyMCE / textarea)
+      // 18. DESCRIPTION (Rich text editor / TinyMCE / exact description textarea only)
       if (isClean(fields.description)) {
         this.fillDescription(doc, fields.description);
       }
@@ -1941,9 +1973,9 @@
         }
       } catch (e) {}
 
-      // 4. Target Textarea / Input
-      const textarea = doc.querySelector('#target_description, #description, textarea[name="description"], textarea[name*="description"]');
-      if (textarea) {
+      // 4. Target Textarea / Input (Specifically exclude custom fields like fields[46], fields[47], etc.)
+      const textarea = doc.querySelector('#target_description, #description, textarea[name="description"]');
+      if (textarea && !textarea.name?.startsWith('fields[') && !textarea.id?.startsWith('fields_')) {
         textarea.value = text;
         try {
           textarea.dispatchEvent(new Event('input', { bubbles: true }));
