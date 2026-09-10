@@ -1601,13 +1601,58 @@
         if (el) { el.value = fields.bodyColor; triggerEvents(el); }
       }
 
-      // 9. CONDITION (Explicitly avoid "Used Or New")
+      // 9. CONDITION (Second Condition field ONLY; NEVER touch the first "Used Or New" control)
       if (isClean(fields.condition)) {
-        const el = findFieldElement({
-          selectors: ['#target_condition_input', '#target_condition', '#condition', 'input[name="condition"]', 'input[name="fields[condition]"]'],
-          labels: [/^condition\s*\*?$/i, /^condition status\s*\*?$/i],
-          names: ['condition', 'target_condition_input']
-        });
+        const findSecondConditionField = () => {
+          // Direct specific selectors for the second condition field
+          const directSelectors = [
+            '#target_condition_input',
+            'input[name="target_condition_input"]',
+            '#condition',
+            'input[name="condition"]',
+            'input[name="fields[condition]"]',
+            'input[name="fields[Condition]"]'
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && this.isSafeConditionField(el)) return el;
+            } catch (e) {}
+          }
+
+          // Scan all labels matching "Condition"
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          const conditionInputs = [];
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            if (/^condition(?:\s+status)?\s*\*?$/i.test(lText)) {
+              const forId = lbl.getAttribute('for');
+              let el = forId ? doc.getElementById(forId) : null;
+              if (!el) el = lbl.querySelector('input:not([type="hidden"]), textarea');
+              if (!el) {
+                const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
+                if (container) {
+                  el = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea');
+                }
+              }
+              if (el && this.isSafeConditionField(el)) {
+                if (!conditionInputs.includes(el)) conditionInputs.push(el);
+              }
+            }
+          }
+
+          if (conditionInputs.length === 1) {
+            return conditionInputs[0];
+          }
+          if (conditionInputs.length > 1) {
+            // The SECOND Condition field is the intended destination
+            return conditionInputs[conditionInputs.length - 1];
+          }
+
+          return null;
+        };
+
+        const el = findSecondConditionField();
         if (el) { el.value = fields.condition; triggerEvents(el); }
       }
 
@@ -1651,14 +1696,28 @@
         if (el) { el.value = fields.averageRating; triggerEvents(el); }
       }
 
-      // 14. FEATURES (Textarea)
+      // 14. FEATURES (Textarea - exact preservation of internal word spacing and newlines)
       if (isClean(fields.features)) {
         const el = findFieldElement({
-          selectors: ['#target_features_text', '#target_features', '#features', 'textarea[name*="features"]', 'textarea#features'],
+          selectors: [
+            'textarea#target_features_text',
+            'textarea#target_features',
+            'textarea#features',
+            '#target_features_text',
+            '#target_features',
+            '#features',
+            'textarea[name*="features"]',
+            'textarea[name="fields[features]"]',
+            'textarea[name="fields[Features]"]'
+          ],
           labels: [/^features\s*\*?$/i, /^installed features\s*\*?$/i],
-          names: ['features', 'target_features_text']
+          names: ['features', 'target_features_text', 'target_features']
         });
-        if (el) { el.value = fields.features; triggerEvents(el); }
+        if (el) {
+          const rawFeaturesText = String(fields.features).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          el.value = rawFeaturesText;
+          triggerEvents(el);
+        }
       }
 
       // 15. SOURCE LINK
@@ -1713,6 +1772,22 @@
       if (excludedKeywords.some(kw => idOrName.includes(kw))) {
         return false;
       }
+
+      return true;
+    },
+
+    isSafeConditionField(el) {
+      if (!el || !this.isSafeEditable(el, false)) return false;
+      if (el.tagName === 'SELECT') return false;
+      if (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden') return false;
+
+      // Ensure it is not the first "Used Or New" control
+      const idOrName = `${el.id || ''} ${el.name || ''}`.toLowerCase();
+      if (/used_or_new|used-or-new|usedornew|used_new|new_or_used/i.test(idOrName)) return false;
+
+      const container = el.closest('.form-group, .control-group, .demo-form-group, tr, td, div') || el.parentElement;
+      const text = `${container ? container.textContent : ''} ${el.placeholder || ''} ${el.value || ''}`.toLowerCase();
+      if (/used\s*(?:or|\/)\s*new/i.test(text)) return false;
 
       return true;
     },

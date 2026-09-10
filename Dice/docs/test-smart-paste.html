@@ -114,16 +114,22 @@
         assert(document.getElementById('target_fuel').value === 'Petrol', 'Target Fuel populated');
         assert(document.getElementById('target_drivetrain').value === '4x2', 'Target 4x2/4x4 populated');
         assert(document.getElementById('target_body_colour').value === 'White', 'Target Body Colour populated');
-        assert(document.getElementById('target_condition_input').value === 'Excellent Condition', 'Target Condition populated');
         assert(document.getElementById('target_pricing_summary').value === 'R 249 900 Est. R 4 456 p/m', 'Target Pricing Summary populated');
         assert(document.getElementById('target_dealer_name').value === 'SMG JETOUR Harbour Arch', 'Target Dealer Name populated');
         assert(document.getElementById('target_dealer_address').value === 'Cape Town, Western Cape', 'Target Dealer Address populated');
         assert(document.getElementById('target_dealer_rating').value === '4.2 (322 Reviews)', 'Target Dealer Rating populated');
         assert(document.getElementById('target_price').value === '249900', 'Target Price formatted to pure digits');
         assert(document.getElementById('target_source_url').value.includes('11223434'), 'Target Source URL populated');
-        assert(document.getElementById('target_features_text').value.includes('Rubber Floor Mats'), 'Target Features populated');
         assert(document.getElementById('target_vehicle_highlights').value.includes('Fuel Efficiency'), 'Target Vehicle Highlights populated');
         assert(document.getElementById('target_description').value.includes('Introducing the stylish'), 'Target Description populated');
+
+        // FIX 1 TEST: First Condition "Used Or New" untouched, Second Condition receives source value
+        assert(document.getElementById('target_used_or_new').value === 'Used', 'FIRST Condition control "Used Or New" is UNTOUCHED');
+        assert(document.getElementById('target_condition_input').value === 'Excellent Condition', 'SECOND Condition field populated with source Condition value');
+
+        // FIX 2 TEST: Features formatting, spaces, and line breaks preserved exactly
+        const expectedMazdaFeatures = "Rubber Floor Mats\nRubber Load Space Mat\nOn The Road";
+        assert(document.getElementById('target_features_text').value === expectedMazdaFeatures, `Features textarea exact word spacing and newlines preserved (Got: "${document.getElementById('target_features_text').value}")`);
         
         // Verify Description rich text iframe
         const descIframe = document.getElementById('description_ifr');
@@ -135,7 +141,7 @@
         assert(document.getElementById('target_category').value === initCategory, 'Category dropdown UNTOUCHED');
         assert(document.getElementById('target_cars_parts').value === initCarsParts, 'Cars-Parts dropdown UNTOUCHED');
         assert(document.getElementById('target_used_cars_sa').value === initUsedCarsSa, 'Used cars in SA dropdown UNTOUCHED');
-        assert(document.getElementById('target_used_or_new').value === initUsedOrNew, 'Used Or New control UNTOUCHED');
+        assert(document.getElementById('target_used_or_new').value === initUsedOrNew, 'First Condition control (Used Or New) UNTOUCHED');
         assert(document.getElementById('target_seats').value === initSeats, 'Seats field UNTOUCHED');
         assert(document.getElementById('target_contact_number').value === initContactNum, 'Contact Number UNTOUCHED');
         assert(document.getElementById('target_currency').value === initCurrency, 'Price currency dropdown UNTOUCHED');
