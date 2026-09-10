@@ -171,6 +171,26 @@
         window.CarSmartPasteEngine.handlePaste(fakeEvent);
         assert(!intercepted, 'Normal non-payload paste is NOT intercepted or prevented');
 
+        log('\n=== TEST 7: DUAL-CONDITION JOMCLASSIFIEDS DOM ISOLATION TEST ===');
+        const mockDiv = document.createElement('div');
+        mockDiv.innerHTML = `
+          <div class="control-group">
+            <label class="control-label">Condition *</label>
+            <input type="text" id="condition" name="condition" value="Used Or New">
+          </div>
+          <div class="control-group">
+            <label for="fields_45" class="control-label">Condition *</label>
+            <input type="text" id="fields_45" name="fields[45]" value="">
+          </div>
+        `;
+        document.body.appendChild(mockDiv);
+
+        window.CarSmartPasteEngine.fillTargetForm(mockDiv, { condition: 'Excellent Condition' });
+
+        assert(mockDiv.querySelector('#condition').value === 'Used Or New', 'JomClassifieds 1st Condition (#condition) remains "Used Or New" UNCHANGED');
+        assert(mockDiv.querySelector('#fields_45').value === 'Excellent Condition', 'JomClassifieds 2nd Condition custom field (#fields_45) receives "Excellent Condition"');
+        document.body.removeChild(mockDiv);
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

@@ -1492,7 +1492,7 @@
                 // Check if label has a "for" attribute
                 const forId = lbl.getAttribute('for');
                 if (forId) {
-                  const el = doc.getElementById(forId);
+                  const el = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
                   if (el && this.isSafeEditable(el, identifiers.allowSelect)) return el;
                 }
                 // Check inside label
@@ -1601,59 +1601,119 @@
         if (el) { el.value = fields.bodyColor; triggerEvents(el); }
       }
 
-      // 9. CONDITION (Second Condition field ONLY; NEVER touch the first "Used Or New" control)
+      // 9. CONDITION (Target SECOND Condition text input ONLY; NEVER touch the first "Used Or New" control)
       if (isClean(fields.condition)) {
         const findSecondConditionField = () => {
-          // Direct specific selectors for the second condition field
-          const directSelectors = [
-            '#target_condition_input',
-            'input[name="target_condition_input"]',
-            '#condition',
-            'input[name="condition"]',
-            'input[name="fields[condition]"]',
-            'input[name="fields[Condition]"]'
-          ];
-          for (const sel of directSelectors) {
-            try {
-              const el = doc.querySelector(sel);
-              if (el && this.isSafeConditionField(el)) return el;
-            } catch (e) {}
+          // Explicit test harness selector
+          const explicitSecond = doc.querySelector('#target_condition_input, input[name="target_condition_input"]');
+          if (explicitSecond && explicitSecond.tagName === 'INPUT' && explicitSecond.type !== 'radio' && explicitSecond.type !== 'checkbox') {
+            return explicitSecond;
           }
 
-          // Scan all labels matching "Condition"
+          // Gather all inputs associated with "Condition" label in DOM order
+          const conditionCandidates = [];
           const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
-          const conditionInputs = [];
+
           for (const lbl of allLabels) {
             const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
-            if (/^condition(?:\s+status)?\s*\*?$/i.test(lText)) {
+            if (/^condition\b/i.test(lText)) {
+              let inputEl = null;
+
+              // 1. Check "for" attribute
               const forId = lbl.getAttribute('for');
-              let el = forId ? doc.getElementById(forId) : null;
-              if (!el) el = lbl.querySelector('input:not([type="hidden"]), textarea');
-              if (!el) {
+              if (forId) {
+                inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+              }
+
+              // 2. Check input inside label
+              if (!inputEl) {
+                inputEl = lbl.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
+              }
+
+              // 3. Check container / sibling input
+              if (!inputEl) {
                 const container = lbl.closest('.form-group, .control-group, .demo-form-group, tr, td, .form-item, div');
                 if (container) {
-                  el = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea');
+                  inputEl = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"])');
                 }
               }
-              if (el && this.isSafeConditionField(el)) {
-                if (!conditionInputs.includes(el)) conditionInputs.push(el);
+
+              if (inputEl && inputEl.tagName === 'INPUT' && !conditionCandidates.includes(inputEl)) {
+                conditionCandidates.push(inputEl);
               }
             }
           }
 
-          if (conditionInputs.length === 1) {
-            return conditionInputs[0];
+          // Also check custom fields with condition in name/id
+          const directCustomFields = doc.querySelectorAll('input[name*="condition" i], input[name*="Condition"], input[id*="condition" i]');
+          for (const el of directCustomFields) {
+            if (el.tagName === 'INPUT' && el.type !== 'hidden' && el.type !== 'radio' && el.type !== 'checkbox') {
+              if (!conditionCandidates.includes(el)) {
+                conditionCandidates.push(el);
+              }
+            }
           }
-          if (conditionInputs.length > 1) {
-            // The SECOND Condition field is the intended destination
-            return conditionInputs[conditionInputs.length - 1];
+
+          // Filter out any element that is clearly the FIRST "Used Or New" control
+          const validSecondCandidates = conditionCandidates.filter(el => {
+            if (el.tagName !== 'INPUT') return false;
+            if (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+
+            const val = (el.value || '').toLowerCase();
+            const placeholder = (el.placeholder || '').toLowerCase();
+            const id = (el.id || '').toLowerCase();
+            const name = (el.name || '').toLowerCase();
+            const container = el.closest('.form-group, .control-group, .demo-form-group, tr, td, div') || el.parentElement;
+            const containerText = (container ? container.textContent : '').toLowerCase();
+
+            // If it explicitly mentions "used or new", it is the first control -> EXCLUDE
+            if (/used\s*(?:or|\/)\s*new/i.test(val) || /used\s*(?:or|\/)\s*new/i.test(placeholder) ||
+                /used\s*(?:or|\/)\s*new/i.test(id) || /used\s*(?:or|\/)\s*new/i.test(name) ||
+                /used_or_new|used-or-new|usedornew|new_or_used/i.test(id) ||
+                /used_or_new|used-or-new|usedornew|new_or_used/i.test(name)) {
+              return false;
+            }
+
+            return true;
+          });
+
+          // If there are multiple candidates, the SECOND one is the intended field in the Ad Details section
+          if (validSecondCandidates.length >= 2) {
+            // Check if one is a custom field `fields[...]`
+            const customField = validSecondCandidates.find(el => /^fields\[/i.test(el.name) || /^fields_/i.test(el.id));
+            if (customField) return customField;
+            // Otherwise take the second in DOM order
+            return validSecondCandidates[1];
+          }
+
+          if (validSecondCandidates.length === 1) {
+            const single = validSecondCandidates[0];
+            // If there were 2 total condition candidates and the first was filtered out or this is the only non-used-or-new candidate
+            if (conditionCandidates.length >= 2 || /^fields\[/i.test(single.name) || /^fields_/i.test(single.id) || single.id === 'target_condition_input') {
+              return single;
+            }
+            // If the single candidate has container text mentioning "Used Or New", fail safely!
+            const cText = (single.closest('.form-group, .control-group, .demo-form-group, div')?.textContent || '').toLowerCase();
+            if (/used\s*(?:or|\/)\s*new/i.test(cText)) {
+              return null; // Fail safely!
+            }
+            return single;
           }
 
           return null;
         };
 
         const el = findSecondConditionField();
-        if (el) { el.value = fields.condition; triggerEvents(el); }
+        if (el && el.tagName === 'INPUT' && el.type !== 'radio' && el.type !== 'checkbox') {
+          // Absolute safety check: verify element is NOT the first "Used Or New" control before writing
+          const currentVal = (el.value || '').toLowerCase();
+          const currentId = (el.id || '').toLowerCase();
+          const currentName = (el.name || '').toLowerCase();
+          if (!currentVal.includes('used or new') && !currentId.includes('used_or_new') && !currentName.includes('used_or_new')) {
+            el.value = fields.condition;
+            triggerEvents(el);
+          }
+        }
       }
 
       // 10. PRICING SUMMARY
