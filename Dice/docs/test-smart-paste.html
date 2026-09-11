@@ -436,15 +436,19 @@
         const nextDataMergedExt = window.CarSourceExtractor.extractFromDocument(nextDataMergedDoc).normalized;
         const nextDataMergedLines = nextDataMergedExt.features.split('\n');
 
+        const expected8Features = [
+          'Air Conditioning',
+          'Power Steering',
+          'Automatic Brake System',
+          'Radio / CD',
+          'Security System',
+          'Air Bag',
+          'Central Locking',
+          'Electric Windows'
+        ].join('\n');
+
         assert(nextDataMergedLines.length === 8, `Extractor prioritized real DOM 8 items over __NEXT_DATA__ merged string (Got: ${nextDataMergedLines.length})`);
-        assert(nextDataMergedLines[0] === 'Air Conditioning', `Feature 1 is "Air Conditioning" (Got: "${nextDataMergedLines[0]}")`);
-        assert(nextDataMergedLines[1] === 'Power Steering', `Feature 2 is "Power Steering" (Got: "${nextDataMergedLines[1]}")`);
-        assert(nextDataMergedLines[2] === 'Automatic Brake System', `Feature 3 is "Automatic Brake System" (Got: "${nextDataMergedLines[2]}")`);
-        assert(nextDataMergedLines[3] === 'Radio / CD', `Feature 4 is "Radio / CD" (Got: "${nextDataMergedLines[3]}")`);
-        assert(nextDataMergedLines[4] === 'Security System', `Feature 5 is "Security System" (Got: "${nextDataMergedLines[4]}")`);
-        assert(nextDataMergedLines[5] === 'Air Bag', `Feature 6 is "Air Bag" (Got: "${nextDataMergedLines[5]}")`);
-        assert(nextDataMergedLines[6] === 'Central Locking', `Feature 7 is "Central Locking" (Got: "${nextDataMergedLines[6]}")`);
-        assert(nextDataMergedLines[7] === 'Electric Windows', `Feature 8 is "Electric Windows" (Got: "${nextDataMergedLines[7]}")`);
+        assert(nextDataMergedExt.features === expected8Features, `Extracted Features exactly match newline-separated string`);
         assert(!nextDataMergedExt.features.includes('Air ConditioningPower Steering'), 'Output does NOT contain merged string from __NEXT_DATA__');
 
         log('\n========================================');

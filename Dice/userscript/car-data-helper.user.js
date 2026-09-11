@@ -1093,40 +1093,40 @@
       }
 
       // 2. Identify candidate container(s) for the highlights section
-      const candidateContainers = [];
+      const highlightContainers = [];
 
       if (highlightHeading) {
         // Sibling of heading
         if (highlightHeading.nextElementSibling) {
-          candidateContainers.push(highlightHeading.nextElementSibling);
+          highlightContainers.push(highlightHeading.nextElementSibling);
         }
         // Sibling of heading's immediate wrapper
         if (highlightHeading.parentElement && highlightHeading.parentElement !== doc.body) {
           if (highlightHeading.parentElement.nextElementSibling) {
-            candidateContainers.push(highlightHeading.parentElement.nextElementSibling);
+            highlightContainers.push(highlightHeading.parentElement.nextElementSibling);
           }
           if (highlightHeading.parentElement.parentElement && highlightHeading.parentElement.parentElement !== doc.body) {
             if (highlightHeading.parentElement.parentElement.nextElementSibling) {
-              candidateContainers.push(highlightHeading.parentElement.parentElement.nextElementSibling);
+              highlightContainers.push(highlightHeading.parentElement.parentElement.nextElementSibling);
             }
           }
         }
         // Enclosing section / article / card
         let p = highlightHeading.parentElement;
         while (p && p !== doc.body && p.tagName !== 'BODY') {
-          candidateContainers.push(p);
+          highlightContainers.push(p);
           p = p.parentElement;
         }
       }
 
       // Direct attribute selector candidates
-      const directContainers = doc.querySelectorAll('[data-test*="highlight"], [data-testid*="highlight"], #vehicle-highlights, #highlights, .vehicle-highlights, .highlights-section, section[class*="highlight"], div[class*="highlights"]');
-      directContainers.forEach(el => candidateContainers.push(el));
+      const highlightDirectContainers = doc.querySelectorAll('[data-test*="highlight"], [data-testid*="highlight"], #vehicle-highlights, #highlights, .vehicle-highlights, .highlights-section, section[class*="highlight"], div[class*="highlights"]');
+      highlightDirectContainers.forEach(el => highlightContainers.push(el));
 
       // 3. Find repeated card items inside containers
       let extractedCards = [];
 
-      for (const container of candidateContainers) {
+      for (const container of highlightContainers) {
         if (!container || extractedCards.length > 0) break;
 
         // Strategy A: Direct repeated children of a grid/flex wrapper inside container
