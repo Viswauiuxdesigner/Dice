@@ -451,6 +451,47 @@
         assert(nextDataMergedExt.features === expected8Features, `Extracted Features exactly match newline-separated string`);
         assert(!nextDataMergedExt.features.includes('Air ConditioningPower Steering'), 'Output does NOT contain merged string from __NEXT_DATA__');
 
+        // Test 8H: Exact 7-Item Reference Listing (Air Conditioner, Airbags, Power Steering, Alloy Wheels, Infotainment Unit, Reverse Camera, 5 Seater)
+        const ref7Html = `
+          <!DOCTYPE html><html><body>
+          <div class="specs-wrapper">
+            <h3 class="title">Features</h3>
+            <div class="features-list">
+              <div class="feature-card">Air Conditioner</div>
+              <div class="feature-card">Airbags</div>
+              <div class="feature-card">Power Steering</div>
+              <div class="feature-card">Alloy Wheels</div>
+              <div class="feature-card">Infotainment Unit</div>
+              <div class="feature-card">Reverse Camera</div>
+              <div class="feature-card">5 Seater</div>
+            </div>
+          </div>
+          </body></html>
+        `;
+        const ref7Doc = parser.parseFromString(ref7Html, 'text/html');
+        const ref7Ext = window.CarSourceExtractor.extractFromDocument(ref7Doc).normalized;
+        const ref7Lines = ref7Ext.features.split('\n');
+
+        const expected7Features = [
+          'Air Conditioner',
+          'Airbags',
+          'Power Steering',
+          'Alloy Wheels',
+          'Infotainment Unit',
+          'Reverse Camera',
+          '5 Seater'
+        ].join('\n');
+
+        assert(ref7Lines.length === 7, `Extracted exact 7 features from reference listing (Got: ${ref7Lines.length})`);
+        assert(ref7Ext.features === expected7Features, `Extracted 7 Features exactly match newline-separated string`);
+        assert(!ref7Ext.features.includes('Air ConditionerAirbags'), 'Features are NOT concatenated without newlines');
+        assert(ref7Ext.features.includes('Air Conditioner'), 'Internal space preserved for "Air Conditioner"');
+        assert(ref7Ext.features.includes('Power Steering'), 'Internal space preserved for "Power Steering"');
+        assert(ref7Ext.features.includes('Alloy Wheels'), 'Internal space preserved for "Alloy Wheels"');
+        assert(ref7Ext.features.includes('Infotainment Unit'), 'Internal space preserved for "Infotainment Unit"');
+        assert(ref7Ext.features.includes('Reverse Camera'), 'Internal space preserved for "Reverse Camera"');
+        assert(ref7Ext.features.includes('5 Seater'), 'Internal space preserved for "5 Seater"');
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

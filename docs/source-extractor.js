@@ -538,9 +538,9 @@ const CarsCoZaAdapter = {
 
     // 1. PRIMARY: DOM Structural Extraction (strictly scoped to Features section with repeating item unwrapping)
     // Step A: Find the explicit Features heading element (prefer deepest heading)
-    const candidateHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"], summary, div, span')).filter(el => {
+    const candidateHeadings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b, [class*="heading"], [class*="title"], summary, div, span, p, button, a')).filter(el => {
       const txt = (el.textContent || '').trim();
-      if (!/^(?:key\s+|vehicle\s+|standard\s+|installed\s+)?features(?:\s*&\s*specs)?$/i.test(txt)) return false;
+      if (!/^(?:key\s+|vehicle\s+|standard\s+|installed\s+|comfort\s+|safety\s+|interior\s+|exterior\s+)?features(?:\s*\(\d+\))?(?:\s*&\s*specs|\s*and\s*specs)?$/i.test(txt)) return false;
       if (txt.length > 35) return false;
       if (el.tagName === 'H1' && /20\d\d|[a-z]{3,}\s+[a-z]{3,}/i.test(txt)) return false;
       if (el.querySelector('h1, h2, h3, h4, h5, h6')) return false;
