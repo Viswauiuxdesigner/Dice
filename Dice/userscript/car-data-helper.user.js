@@ -18,7 +18,8 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '2.2.4';
+  const SCRIPT_VERSION = '2.2.4-DIAGNOSTIC';
+  const BUILD_TIMESTAMP = '2026-09-11 09:35 UTC';
 
   // --- 1. NORMALIZERS ENGINE ---
   const Normalizers = {
@@ -884,6 +885,23 @@
         }
       }
 
+      const featuresDebug = {
+        scriptVersion: SCRIPT_VERSION,
+        buildTimestamp: BUILD_TIMESTAMP,
+        headingFound: featureHeading ? {
+          tag: featureHeading.tagName,
+          class: featureHeading.className || '',
+          text: (featureHeading.textContent || '').trim()
+        } : null,
+        candidateHeadingsCount: candidateHeadings.length,
+        candidateContainersCount: candidateContainers.length,
+        domItemsCount: items.length,
+        domItems: items,
+        nextDataFeatures: nextDataProps ? nextDataProps.features : null,
+        selectedSource: (items.length > 0) ? 'LIVE_DOM' : ((featuresList && featuresList.length > 0) ? 'NEXT_DATA' : 'NONE'),
+        featuresArrayBeforeNorm: featuresList
+      };
+
       // --- 15. DESCRIPTION (CSS-Safe Multi-Strategy Scoped Extractor with Show More Clicker) ---
       let description = '';
 
@@ -1259,7 +1277,8 @@
         description,
         vehicleHighlights,
         price: formattedPrice || rawPrice,
-        sourceUrl
+        sourceUrl,
+        _featuresDebug: featuresDebug
       };
     }
   };
@@ -1308,13 +1327,14 @@
       description: norm.normalizeDescription(raw.description),
       vehicleHighlights: norm.normalizeVehicleHighlights(raw.vehicleHighlights),
       price: norm.normalizePrice(raw.price),
-      sourceUrl: raw.sourceUrl || window.location.href
+      sourceUrl: raw.sourceUrl || window.location.href,
+      _featuresDebug: raw._featuresDebug || null
     };
     const validation = Validators.validateAll(normalized);
     return { normalized, validation };
   }
 
-  function copyToClipboard(text, btnElement, event) {
+  function copyToClipboard(text, btnElement, event, fieldLabel, fieldKey) {
     if (event) {
       try {
         event.preventDefault();
@@ -1326,6 +1346,17 @@
     if (!cleanStr.trim() || cleanStr.trim() === 'Missing / Needs Review') {
       alert('This field is missing or unextracted on this listing.');
       return;
+    }
+
+    if (fieldKey === 'features' || (fieldLabel && fieldLabel.includes('Features'))) {
+      const debugObj = {
+        featuresCopySource: cleanStr,
+        featuresCopySourceJSON: JSON.stringify(cleanStr),
+        length: cleanStr.length,
+        newlinesCount: (cleanStr.match(/\n/g) || []).length
+      };
+      console.log('📋 [FEATURES COPY DIAGNOSTIC]:', debugObj);
+      alert(`[FEATURES COPY DIAGNOSTIC]\n\nLength: ${debugObj.length}\nNewlines count: ${debugObj.newlinesCount}\n\nJSON.stringify(clipboardValue):\n${debugObj.featuresCopySourceJSON}`);
     }
 
     const copyFallback = (str) => {
@@ -1546,11 +1577,46 @@
         copyBtn.type = 'button';
         copyBtn.textContent = 'COPY';
         copyBtn.title = `Copy ${label}`;
-        copyBtn.onclick = (e) => copyToClipboard(val, copyBtn, e);
+        copyBtn.onclick = (e) => copyToClipboard(val, copyBtn, e, label, key);
 
         row.appendChild(leftCol);
         row.appendChild(copyBtn);
         bodyEl.appendChild(row);
+      });
+
+      // Inject Live Features Diagnostic Card
+      const diagCard = document.createElement('div');
+      diagCard.id = 'car-panel-diagnostic-card';
+      diagCard.style.cssText = 'background:#0f172a; color:#f8fafc; border-radius:6px; padding:10px; font-family:monospace; font-size:11px; margin-top:8px; line-height:1.4; word-break:break-all;';
+      
+      const dbg = normalized._featuresDebug || {};
+      diagCard.innerHTML = `
+        <div style="color:#38bdf8; font-weight:700; border-bottom:1px solid #334155; padding-bottom:4px; margin-bottom:6px;">
+          🔍 LIVE FEATURES DIAGNOSTIC TRACE
+        </div>
+        <div><strong style="color:#94a3b8;">Runtime Build:</strong> <span style="color:#f43f5e; font-weight:700;">${SCRIPT_VERSION}</span> (${BUILD_TIMESTAMP})</div>
+        <div><strong style="color:#94a3b8;">Selected Source:</strong> <span style="color:#fbbf24; font-weight:700;">${dbg.selectedSource || 'NONE'}</span></div>
+        <div><strong style="color:#94a3b8;">DOM Heading Found:</strong> ${dbg.headingFound ? `&lt;${dbg.headingFound.tag}&gt; "${dbg.headingFound.text}"` : 'None'}</div>
+        <div><strong style="color:#94a3b8;">DOM Items Count:</strong> ${dbg.domItemsCount || 0}</div>
+        <div><strong style="color:#94a3b8;">DOM Items Array:</strong> ${JSON.stringify(dbg.domItems || [])}</div>
+        <div><strong style="color:#94a3b8;">NEXT_DATA Features:</strong> ${JSON.stringify(dbg.nextDataFeatures || 'None')}</div>
+        <div><strong style="color:#94a3b8;">Features Array Before Norm:</strong> ${JSON.stringify(dbg.featuresArrayBeforeNorm || [])}</div>
+        <div><strong style="color:#94a3b8;">Final Features JSON:</strong> <span style="color:#34d399;">${JSON.stringify(normalized.features)}</span></div>
+      `;
+      bodyEl.appendChild(diagCard);
+
+      console.log('🚗 [CAR DATA HELPER DIAGNOSTIC TRACE]:', {
+        version: SCRIPT_VERSION,
+        build: BUILD_TIMESTAMP,
+        heading: dbg.headingFound,
+        containersCount: dbg.candidateContainersCount,
+        domItemsCount: dbg.domItemsCount,
+        domItems: dbg.domItems,
+        nextDataRaw: dbg.nextDataFeatures,
+        selectedSource: dbg.selectedSource,
+        featuresArrayBeforeNorm: dbg.featuresArrayBeforeNorm,
+        finalNormalizedFeatures: normalized.features,
+        finalNormalizedFeaturesJSON: JSON.stringify(normalized.features)
       });
 
       if (countEl) {

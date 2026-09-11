@@ -714,7 +714,20 @@ const CarsCoZaAdapter = {
       } else if (typeof nextDataProps.features === 'string' && nextDataProps.features.includes('\n')) {
         featuresList = nextDataProps.features.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
       }
-    }
+    const featuresDebug = {
+      headingFound: featureHeading ? {
+        tag: featureHeading.tagName,
+        class: featureHeading.className || '',
+        text: (featureHeading.textContent || '').trim()
+      } : null,
+      candidateHeadingsCount: candidateHeadings.length,
+      candidateContainersCount: candidateContainers.length,
+      domItemsCount: items.length,
+      domItems: items,
+      nextDataFeatures: nextDataProps ? nextDataProps.features : null,
+      selectedSource: (items.length > 0) ? 'LIVE_DOM' : ((featuresList && featuresList.length > 0) ? 'NEXT_DATA' : 'NONE'),
+      featuresArrayBeforeNorm: featuresList
+    };
 
     // --- 15. DESCRIPTION (CSS-Safe Multi-Strategy Scoped Extractor with Show More Clicker) ---
     let description = '';
@@ -1100,7 +1113,8 @@ const CarsCoZaAdapter = {
       description,
       vehicleHighlights,
       price: formattedPrice || rawPrice,
-      sourceUrl
+      sourceUrl,
+      _featuresDebug: featuresDebug
     };
   }
 };
@@ -1131,7 +1145,8 @@ window.CarSourceExtractor = {
       description: norm.normalizeDescription(raw.description),
       vehicleHighlights: norm.normalizeVehicleHighlights ? norm.normalizeVehicleHighlights(raw.vehicleHighlights) : (raw.vehicleHighlights || ''),
       price: norm.normalizePrice(raw.price),
-      sourceUrl: raw.sourceUrl || doc.location?.href || ''
+      sourceUrl: raw.sourceUrl || doc.location?.href || '',
+      _featuresDebug: raw._featuresDebug || null
     };
 
     const validationReport = window.CarValidators.validateCarData(normalized);
