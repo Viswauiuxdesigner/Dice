@@ -492,6 +492,72 @@
         assert(ref7Ext.features.includes('Reverse Camera'), 'Internal space preserved for "Reverse Camera"');
         assert(ref7Ext.features.includes('5 Seater'), 'Internal space preserved for "5 Seater"');
 
+        // Test 9: Features COPY / Clipboard Regression Tests
+        log('\n=== TEST 9: FEATURES COPY / CLIPBOARD REGRESSION TESTS ===');
+        const testFeaturesInput = "Air Conditioner\nAirbags\nPower Steering\nAlloy Wheels\nInfotainment Unit\nReverse Camera\n5 Seater";
+
+        // Test 9A: GM_setClipboard path (Tampermonkey Android native bridge)
+        let gmClipboardReceived = null;
+        window.GM_setClipboard = (str, type) => {
+          gmClipboardReceived = str;
+        };
+
+        window.CarDataHelperClipboard.copyToClipboard(testFeaturesInput, null, null, 'Features', 'features');
+        assert(gmClipboardReceived !== null, 'GM_setClipboard was called');
+        assert(gmClipboardReceived.includes('\n') === true, 'GM_setClipboard value includes "\\n"');
+        assert(gmClipboardReceived.split('\n').length === 7, 'GM_setClipboard value split("\\n").length === 7');
+        assert(gmClipboardReceived === testFeaturesInput, 'GM_setClipboard received EXACT unmodified 7-line Features string');
+        assert(gmClipboardReceived !== "Air ConditionerAirbagsPower SteeringAlloy WheelsInfotainment UnitReverse Camera5 Seater", 'GM_setClipboard did NOT receive concatenated string');
+
+        // Test 9B: navigator.clipboard.writeText path
+        delete window.GM_setClipboard;
+        let navClipboardReceived = null;
+        const origClipboard = navigator.clipboard;
+        Object.defineProperty(navigator, 'clipboard', {
+          value: {
+            writeText: async (str) => {
+              navClipboardReceived = str;
+              return Promise.resolve();
+            }
+          },
+          configurable: true
+        });
+
+        window.CarDataHelperClipboard.copyToClipboard(testFeaturesInput, null, null, 'Features', 'features');
+        assert(navClipboardReceived !== null, 'navigator.clipboard.writeText was called');
+        assert(navClipboardReceived.includes('\n') === true, 'navigator.clipboard value includes "\\n"');
+        assert(navClipboardReceived.split('\n').length === 7, 'navigator.clipboard value split("\\n").length === 7');
+        assert(navClipboardReceived === testFeaturesInput, 'navigator.clipboard received EXACT unmodified 7-line Features string');
+
+        // Test 9C: In-DOM mobile-safe fallback path
+        Object.defineProperty(navigator, 'clipboard', {
+          value: null,
+          configurable: true
+        });
+        let execCommandCopiedText = null;
+        const origExecCommand = document.execCommand;
+        document.execCommand = (cmd) => {
+          if (cmd === 'copy') {
+            const activeEl = document.activeElement;
+            if (activeEl && activeEl.tagName === 'TEXTAREA') {
+              execCommandCopiedText = activeEl.value.substring(activeEl.selectionStart, activeEl.selectionEnd);
+            }
+          }
+          return true;
+        };
+
+        window.CarDataHelperClipboard.copyToClipboard(testFeaturesInput, null, null, 'Features', 'features');
+        assert(execCommandCopiedText !== null, 'execCommand copy captured selected text');
+        assert(execCommandCopiedText.includes('\n') === true, 'Fallback selection includes "\\n"');
+        assert(execCommandCopiedText.split('\n').length === 7, 'Fallback selection split("\\n").length === 7');
+        assert(execCommandCopiedText === testFeaturesInput, 'Fallback selection captured EXACT unmodified 7-line Features string');
+
+        // Restore environment
+        if (origClipboard) {
+          Object.defineProperty(navigator, 'clipboard', { value: origClipboard, configurable: true });
+        }
+        document.execCommand = origExecCommand;
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');

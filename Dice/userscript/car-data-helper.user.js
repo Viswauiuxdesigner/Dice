@@ -12,6 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_setClipboard
 // @run-at       document-end
 // ==UserScript==
 
@@ -1364,11 +1365,21 @@
       textarea.value = str;
       textarea.setAttribute('readonly', '');
       textarea.style.position = 'fixed';
-      textarea.style.left = '-9999px';
       textarea.style.top = '0';
+      textarea.style.left = '0';
+      textarea.style.width = '2em';
+      textarea.style.height = '2em';
+      textarea.style.padding = '0';
+      textarea.style.border = 'none';
+      textarea.style.outline = 'none';
+      textarea.style.boxShadow = 'none';
+      textarea.style.background = 'transparent';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      textarea.style.zIndex = '-9999';
       document.body.appendChild(textarea);
       textarea.focus();
-      textarea.select();
+      textarea.setSelectionRange(0, str.length);
       try {
         document.execCommand('copy');
       } catch (err) {
@@ -1377,10 +1388,22 @@
       document.body.removeChild(textarea);
     };
 
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(cleanStr).catch(() => copyFallback(cleanStr));
-    } else {
-      copyFallback(cleanStr);
+    let copied = false;
+    if (typeof GM_setClipboard === 'function') {
+      try {
+        GM_setClipboard(cleanStr, 'text');
+        copied = true;
+      } catch (gmErr) {
+        console.warn('GM_setClipboard failed:', gmErr);
+      }
+    }
+
+    if (!copied) {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(cleanStr).catch(() => copyFallback(cleanStr));
+      } else {
+        copyFallback(cleanStr);
+      }
     }
 
     if (btnElement) {
@@ -2311,12 +2334,13 @@
     }
   };
 
-  // Expose SmartPasteEngine and CarsCoZaAdapter for testing harnesses
+  // Expose SmartPasteEngine, CarsCoZaAdapter, and Clipboard for testing harnesses
   if (typeof window !== 'undefined') {
     window.CarSmartPasteEngine = SmartPasteEngine;
     window.CarsCoZaAdapter = CarsCoZaAdapter;
     window.CarDataHelperNormalizers = Normalizers;
     window.CarDataHelperValidators = Validators;
+    window.CarDataHelperClipboard = { copyToClipboard };
   }
 
   // Active initialization
