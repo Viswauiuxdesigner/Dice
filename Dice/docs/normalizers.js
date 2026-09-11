@@ -169,5 +169,23 @@ window.CarNormalizers = {
       return cleanCards.join('\n\n');
     }
     return '';
+  },
+
+  /**
+   * Normalize Contact / Phone Number (e.g. "060 123 4567", "tel:0601234567" -> "060 123 4567")
+   * Rejects masked numbers with asterisks (e.g. "060 07* ****") and invalid strings.
+   */
+  normalizeContactNumber(val) {
+    if (!val || typeof val !== 'string') return '';
+    let str = val.trim();
+    if (str.includes('*') || /[\u2026]|\.{3,}/.test(str)) return '';
+    str = str.replace(/^tel:\s*/i, '');
+    str = str.replace(/^(?:call|tel|telephone|phone|contact|mobile|cell)(?:\s*:|\s+)/i, '');
+    str = str.replace(/\s+/g, ' ').trim();
+    if (/show\s*number|missing|n\/a|unspecified/i.test(str)) return '';
+    const digits = str.replace(/[^\d]/g, '');
+    if (digits.length < 7 || digits.length > 15) return '';
+    if (/[a-zA-Z]{3,}/.test(str) && !str.toLowerCase().startsWith('tel')) return '';
+    return str;
   }
 };

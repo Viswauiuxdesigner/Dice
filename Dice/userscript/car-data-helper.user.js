@@ -148,6 +148,19 @@
         return cleanCards.join('\n\n');
       }
       return '';
+    },
+    normalizeContactNumber(val) {
+      if (!val || typeof val !== 'string') return '';
+      let str = val.trim();
+      if (str.includes('*') || /[\u2026]|\.{3,}/.test(str)) return '';
+      str = str.replace(/^tel:\s*/i, '');
+      str = str.replace(/^(?:call|tel|telephone|phone|contact|mobile|cell)(?:\s*:|\s+)/i, '');
+      str = str.replace(/\s+/g, ' ').trim();
+      if (/show\s*number|missing|n\/a|unspecified/i.test(str)) return '';
+      const digits = str.replace(/[^\d]/g, '');
+      if (digits.length < 7 || digits.length > 15) return '';
+      if (/[a-zA-Z]{3,}/.test(str) && !str.toLowerCase().startsWith('tel')) return '';
+      return str;
     }
   };
 
@@ -163,6 +176,11 @@
       if (key === 'year') {
         const num = Number(value);
         if (isNaN(num) || num < 1900 || num > new Date().getFullYear() + 2) {
+          return { status: 'missing', label: 'Missing / Needs Review' };
+        }
+      }
+      if (key === 'contactNumber') {
+        if (typeof value !== 'string' || value.includes('*') || value.replace(/[^\d]/g, '').length < 7) {
           return { status: 'missing', label: 'Missing / Needs Review' };
         }
       }
@@ -1254,11 +1272,56 @@
         vehicleHighlights = Normalizers.normalizeVehicleHighlights(vehicleHighlights);
       }
 
-      // --- 17. SOURCE URL ---
+      // --- 18. SOURCE URL ---
       const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                         doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                         getMeta(['og:url']) ||
                         doc.location?.href || '';
+
+      // --- 19. CONTACT NUMBER (Dealer / Seller Phone Number) ---
+      let contactNumber = '';
+
+      // Step A: Live DOM check for explicit tel links or revealed phone elements
+      const telLinks = doc.querySelectorAll('a[href^="tel:"], [data-test*="phone"], [data-test*="contact-number"], [data-test*="dealer-phone"], [class*="dealer-phone"], [class*="contact-number"]');
+      for (const link of telLinks) {
+        const href = (link.getAttribute('href') || '').replace(/^tel:\s*/i, '').trim();
+        const txt = (link.textContent || '').replace(/\s+/g, ' ').trim();
+        const cand = href || txt;
+        if (cand && !cand.includes('*') && !cand.toLowerCase().includes('show') && !cand.toLowerCase().includes('missing')) {
+          const digits = cand.replace(/[^\d]/g, '');
+          if (digits.length >= 7 && digits.length <= 15) {
+            contactNumber = cand;
+            break;
+          }
+        }
+      }
+
+      // Step B: Search inside dealer / seller / contact cards
+      if (!contactNumber) {
+        const contactContainers = doc.querySelectorAll('.dealer-card, .dealer-details, .seller-details, .contact-details, [data-test*="dealer"], [data-test*="seller"], [data-test*="contact"]');
+        for (const container of contactContainers) {
+          const text = container.textContent || '';
+          const phoneMatch = text.match(/(?:\+27|0)\s*(?:[1-9]\d|\d{2})[\s.-]?\d{3}[\s.-]?\d{4}/);
+          if (phoneMatch) {
+            const matchStr = phoneMatch[0].trim();
+            if (!matchStr.includes('*')) {
+              contactNumber = matchStr;
+              break;
+            }
+          }
+        }
+      }
+
+      // Step C: Structured data fallback if unmasked
+      if (!contactNumber) {
+        const cand = nextDataProps.dealer?.phone || nextDataProps.dealer?.telephone || nextDataProps.dealer?.contactNumber || nextDataProps.seller?.telephone || jsonLdData.offers?.seller?.telephone || jsonLdData.seller?.telephone || '';
+        if (typeof cand === 'string' && cand && !cand.includes('*')) {
+          const digits = cand.replace(/[^\d]/g, '');
+          if (digits.length >= 7 && digits.length <= 15) {
+            contactNumber = cand;
+          }
+        }
+      }
 
       return {
         title,
@@ -1279,12 +1342,13 @@
         vehicleHighlights,
         price: formattedPrice || rawPrice,
         sourceUrl,
+        contactNumber,
         _featuresDebug: featuresDebug
       };
     }
   };
 
-  // --- 4. FLOATING UI PANEL CONTROLLER (18 Fields with Individual COPY buttons) ---
+  // --- 4. FLOATING UI PANEL CONTROLLER (19 Fields with Individual COPY buttons) ---
   const FIELD_DEFINITIONS = [
     { key: 'title', label: 'Title' },
     { key: 'titleDescription', label: 'Title Description' },
@@ -1303,7 +1367,8 @@
     { key: 'description', label: 'Description' },
     { key: 'vehicleHighlights', label: 'Vehicle Highlights' },
     { key: 'price', label: 'Price' },
-    { key: 'sourceUrl', label: 'Source URL' }
+    { key: 'sourceUrl', label: 'Source URL' },
+    { key: 'contactNumber', label: 'Contact Number' }
   ];
 
   let currentExtractedData = {};
@@ -1329,6 +1394,7 @@
       vehicleHighlights: norm.normalizeVehicleHighlights(raw.vehicleHighlights),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || window.location.href,
+      contactNumber: norm.normalizeContactNumber ? norm.normalizeContactNumber(raw.contactNumber) : (raw.contactNumber || ''),
       _featuresDebug: raw._featuresDebug || null
     };
     const validation = Validators.validateAll(normalized);
@@ -1519,14 +1585,52 @@
           description: currentExtractedData.description || '',
           vehicleHighlights: currentExtractedData.vehicleHighlights || '',
           price: currentExtractedData.price || '',
-          sourceUrl: currentExtractedData.sourceUrl || window.location.href
+          sourceUrl: currentExtractedData.sourceUrl || window.location.href,
+          contactNumber: currentExtractedData.contactNumber || ''
         }
       };
       const jsonStr = JSON.stringify(payload, null, 2);
       copyToClipboard(jsonStr, e.target);
     };
 
+    autoRevealShowNumber(document);
     runExtraction();
+  }
+
+  let revealTriggered = false;
+  function autoRevealShowNumber(doc) {
+    if (!doc) doc = document;
+    if (revealTriggered) return;
+
+    const candidateButtons = Array.from(doc.querySelectorAll('button, a, div[role="button"], span[role="button"], [data-test*="show-number"], [data-test*="reveal"], [data-test*="contact-number"], [class*="show-number"], [class*="reveal"]'));
+    for (const btn of candidateButtons) {
+      const text = (btn.textContent || '').trim();
+      const isShowNumber = /^(?:show\s*(?:phone\s*)?number|reveal\s*(?:phone\s*)?number|show\s*contact)$/i.test(text) ||
+                           /show\s*number/i.test(text) ||
+                           (btn.dataset && (btn.dataset.test === 'show-number' || btn.dataset.test === 'btn-show-number'));
+      
+      const href = (btn.getAttribute('href') || '').toLowerCase();
+      if (href.startsWith('tel:') && !text.includes('*') && !/show\s*number/i.test(text)) {
+        continue;
+      }
+      if (href.startsWith('https://wa.me') || href.includes('whatsapp') || href.startsWith('mailto:')) {
+        continue;
+      }
+
+      if (isShowNumber) {
+        revealTriggered = true;
+        try {
+          btn.click();
+        } catch (e) {
+          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+
+        setTimeout(() => { if (typeof runExtraction === 'function') runExtraction(); }, 300);
+        setTimeout(() => { if (typeof runExtraction === 'function') runExtraction(); }, 800);
+        setTimeout(() => { if (typeof runExtraction === 'function') runExtraction(); }, 1500);
+        break;
+      }
+    }
   }
 
   function runExtraction() {
@@ -1643,8 +1747,8 @@
       });
 
       if (countEl) {
-        countEl.textContent = `Extracted ${extractedCount} of 18 fields`;
-        countEl.style.color = extractedCount >= 15 ? '#16a34a' : (extractedCount >= 9 ? '#d97706' : '#dc2626');
+        countEl.textContent = `Extracted ${extractedCount} of 19 fields`;
+        countEl.style.color = extractedCount >= 16 ? '#16a34a' : (extractedCount >= 10 ? '#d97706' : '#dc2626');
         countEl.style.fontWeight = '700';
       }
     }, 100);
@@ -2061,6 +2165,67 @@
         }
       }
 
+      // 12C. CONTACT NUMBER (Target Contact Number input)
+      if (isClean(fields.contactNumber)) {
+        const findContactNumberField = () => {
+          // 1. Direct selectors
+          const directSelectors = [
+            '#target_contact_number',
+            'input[name="target_contact_number"]',
+            '#contact_number',
+            'input[name="contact_number"]',
+            '#contact-number',
+            'input[name="contact-number"]',
+            '#phone',
+            'input[name="phone"]',
+            '#telephone',
+            'input[name="telephone"]',
+            '#target_phone',
+            'input[name="target_phone"]',
+            'input[name*="contact_number"]',
+            'input[name*="contact_phone"]',
+            'input[name*="phone_number"]'
+          ];
+          for (const sel of directSelectors) {
+            try {
+              const el = doc.querySelector(sel);
+              if (el && el.type !== 'hidden' && el.type !== 'button' && el.type !== 'submit') {
+                return el;
+              }
+            } catch (e) {}
+          }
+
+          // 2. Look for Contact Number / Phone label
+          const allLabels = doc.querySelectorAll('label, .control-label, .form-label');
+          for (const lbl of allLabels) {
+            const lText = lbl.textContent.replace(/\s+/g, ' ').trim();
+            if (/^(?:contact\s+(?:phone\s+)?number|phone\s*(?:number)?|telephone|cell\s*(?:number)?|mobile\s*(?:number)?)\s*\*?$/i.test(lText)) {
+              const forId = lbl.getAttribute('for');
+              let inputEl = null;
+              if (forId) {
+                inputEl = (doc.getElementById ? doc.getElementById(forId) : (doc.ownerDocument || document).getElementById(forId)) || (doc.querySelector ? doc.querySelector('#' + CSS.escape(forId)) : null);
+              }
+              if (!inputEl) {
+                const container = lbl.closest('.control-group, .form-group, .demo-form-group, tr, td, .form-item') || lbl.parentElement;
+                if (container) {
+                  inputEl = container.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
+                }
+              }
+              if (inputEl) {
+                return inputEl;
+              }
+            }
+          }
+          return null;
+        };
+
+        const contactNumEl = findContactNumberField();
+        if (contactNumEl && contactNumEl.tagName === 'INPUT') {
+          contactNumEl.value = fields.contactNumber;
+          triggerEvents(contactNumEl);
+        }
+      }
+
       // 13. DEALER AVERAGE RATING
       if (isClean(fields.averageRating)) {
         const el = findFieldElement({
@@ -2341,6 +2506,7 @@
     window.CarDataHelperNormalizers = Normalizers;
     window.CarDataHelperValidators = Validators;
     window.CarDataHelperClipboard = { copyToClipboard };
+    window.CarDataHelperAutoReveal = autoRevealShowNumber;
   }
 
   // Active initialization

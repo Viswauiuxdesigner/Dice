@@ -31,6 +31,12 @@ window.CarValidators = {
       }
     }
 
+    if (key === 'contactNumber') {
+      if (typeof value !== 'string' || value.includes('*') || value.replace(/[^\d]/g, '').length < 7) {
+        return { status: 'missing', label: 'Missing / Needs Review', message: 'Contact Number is masked or invalid.' };
+      }
+    }
+
     return {
       status: 'extracted',
       label: 'Extracted',

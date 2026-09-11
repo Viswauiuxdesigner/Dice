@@ -1089,11 +1089,56 @@ const CarsCoZaAdapter = {
       }
     }
 
-    // --- 17. SOURCE URL ---
+    // --- 18. SOURCE URL ---
     const sourceUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') ||
                       doc.querySelector('#source-url-meta')?.getAttribute('href') ||
                       getMeta(['og:url']) ||
                       doc.location?.href || '';
+
+    // --- 19. CONTACT NUMBER (Dealer / Seller Phone Number) ---
+    let contactNumber = '';
+
+    // Step A: Live DOM check for explicit tel links or revealed phone elements
+    const telLinks = doc.querySelectorAll('a[href^="tel:"], [data-test*="phone"], [data-test*="contact-number"], [data-test*="dealer-phone"], [class*="dealer-phone"], [class*="contact-number"]');
+    for (const link of telLinks) {
+      const href = (link.getAttribute('href') || '').replace(/^tel:\s*/i, '').trim();
+      const txt = (link.textContent || '').replace(/\s+/g, ' ').trim();
+      const cand = href || txt;
+      if (cand && !cand.includes('*') && !cand.toLowerCase().includes('show') && !cand.toLowerCase().includes('missing')) {
+        const digits = cand.replace(/[^\d]/g, '');
+        if (digits.length >= 7 && digits.length <= 15) {
+          contactNumber = cand;
+          break;
+        }
+      }
+    }
+
+    // Step B: Search inside dealer / seller / contact cards
+    if (!contactNumber) {
+      const contactContainers = doc.querySelectorAll('.dealer-card, .dealer-details, .seller-details, .contact-details, [data-test*="dealer"], [data-test*="seller"], [data-test*="contact"]');
+      for (const container of contactContainers) {
+        const text = container.textContent || '';
+        const phoneMatch = text.match(/(?:\+27|0)\s*(?:[1-9]\d|\d{2})[\s.-]?\d{3}[\s.-]?\d{4}/);
+        if (phoneMatch) {
+          const matchStr = phoneMatch[0].trim();
+          if (!matchStr.includes('*')) {
+            contactNumber = matchStr;
+            break;
+          }
+        }
+      }
+    }
+
+    // Step C: Structured data fallback if unmasked
+    if (!contactNumber) {
+      const cand = nextDataProps.dealer?.phone || nextDataProps.dealer?.telephone || nextDataProps.dealer?.contactNumber || nextDataProps.seller?.telephone || jsonLdData.offers?.seller?.telephone || jsonLdData.seller?.telephone || '';
+      if (typeof cand === 'string' && cand && !cand.includes('*')) {
+        const digits = cand.replace(/[^\d]/g, '');
+        if (digits.length >= 7 && digits.length <= 15) {
+          contactNumber = cand;
+        }
+      }
+    }
 
     return {
       title,
@@ -1114,6 +1159,7 @@ const CarsCoZaAdapter = {
       vehicleHighlights,
       price: formattedPrice || rawPrice,
       sourceUrl,
+      contactNumber,
       _featuresDebug: featuresDebug
     };
   }
@@ -1146,6 +1192,7 @@ window.CarSourceExtractor = {
       vehicleHighlights: norm.normalizeVehicleHighlights ? norm.normalizeVehicleHighlights(raw.vehicleHighlights) : (raw.vehicleHighlights || ''),
       price: norm.normalizePrice(raw.price),
       sourceUrl: raw.sourceUrl || doc.location?.href || '',
+      contactNumber: norm.normalizeContactNumber ? norm.normalizeContactNumber(raw.contactNumber) : (raw.contactNumber || ''),
       _featuresDebug: raw._featuresDebug || null
     };
 

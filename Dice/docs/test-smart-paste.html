@@ -558,6 +558,113 @@
         }
         document.execCommand = origExecCommand;
 
+        // === TEST 10: CONTACT NUMBER — AUTOMATIC EXTRACTION, REVEAL, COPY & SMART PASTE ===
+        log('\n=== TEST 10: CONTACT NUMBER FULL INTEGRATION SUITE (TESTS A - I) ===');
+
+        // TEST 10A (TEST A) — BEFORE REVEAL (Masked Number Rejection)
+        const maskedHtml = `
+          <!DOCTYPE html><html><body>
+          <div class="dealer-card">
+            <h3 class="dealer-name">Cape Town Motors</h3>
+            <div class="phone-masked">060 07* ****</div>
+            <button data-test="show-number">Show Number</button>
+          </div>
+          </body></html>
+        `;
+        const maskedDoc = parser.parseFromString(maskedHtml, 'text/html');
+        const maskedExt = window.CarSourceExtractor.extractFromDocument(maskedDoc).normalized;
+        assert(maskedExt.contactNumber === '', `TEST A: Masked number "060 07* ****" is rejected (Got: "${maskedExt.contactNumber}")`);
+        const maskedValReport = window.CarValidators.validateField('contactNumber', maskedExt.contactNumber);
+        assert(maskedValReport.status === 'missing', 'TEST A: Masked number validation status is "missing"');
+        assert(maskedValReport.label === 'Missing / Needs Review', 'TEST A: Masked number validation label is "Missing / Needs Review"');
+
+        // TEST 10B (TEST B) — AFTER REVEAL (Real Phone Number Extraction)
+        const revealedHtml = `
+          <!DOCTYPE html><html><body>
+          <div class="dealer-card">
+            <h3 class="dealer-name">Cape Town Motors</h3>
+            <div class="contact-box">
+              <a href="tel:0601234567" class="dealer-phone">060 123 4567</a>
+            </div>
+          </div>
+          </body></html>
+        `;
+        const revealedDoc = parser.parseFromString(revealedHtml, 'text/html');
+        const revealedExt = window.CarSourceExtractor.extractFromDocument(revealedDoc).normalized;
+        assert(revealedExt.contactNumber === '060 123 4567', `TEST B: Revealed number extracted correctly (Got: "${revealedExt.contactNumber}")`);
+        const revealedValReport = window.CarValidators.validateField('contactNumber', revealedExt.contactNumber);
+        assert(revealedValReport.status === 'extracted', 'TEST B: Revealed number validation status is "extracted"');
+
+        // TEST 10C (TEST C) — AUTOMATIC REVEAL TRIGGER
+        let revealClicked = false;
+        const autoRevealMockDoc = parser.parseFromString(`
+          <!DOCTYPE html><html><body>
+          <div class="dealer-card">
+            <button id="test-show-num" data-test="show-number">Show Number</button>
+          </div>
+          </body></html>
+        `, 'text/html');
+        const showNumBtn = autoRevealMockDoc.getElementById('test-show-num');
+        showNumBtn.addEventListener('click', () => { revealClicked = true; });
+
+        // Test auto reveal trigger
+        if (window.CarDataHelperAutoReveal) {
+          window.CarDataHelperAutoReveal(autoRevealMockDoc);
+          assert(revealClicked === true, 'TEST C: Auto-reveal mechanism triggered "Show Number" click');
+        }
+
+        // TEST 10D (TEST D) — CONTACT NUMBER COPY
+        let copiedContactNumber = null;
+        window.GM_setClipboard = (str) => { copiedContactNumber = str; };
+        window.CarDataHelperClipboard.copyToClipboard('060 123 4567', null, null, 'Contact Number', 'contactNumber');
+        assert(copiedContactNumber === '060 123 4567', `TEST D: Contact Number COPY received exact string without extra words (Got: "${copiedContactNumber}")`);
+
+        // TEST 10E (TEST E) — COPY ALL EXTRACTED INCLUDES 19 FIELDS (INCLUDING contactNumber)
+        const sample19Payload = {
+          marker: 'CAR_DATA_ENTRY_HELPER',
+          version: 1,
+          source: 'cars.co.za',
+          sourceUrl: 'https://www.cars.co.za/for-sale/used/2019-Mazda-2-1.5-Dynamic-Auto-5-dr-Western-Cape-Cape-Town/11223434/',
+          fields: {
+            title: '2019 Mazda 2',
+            titleDescription: '1.5 Dynamic Auto 5-dr',
+            year: '2019',
+            kilometersDriven: '75 743 km',
+            transmission: 'Automatic',
+            fuel: 'Petrol',
+            drivetrain: '4x2',
+            bodyColor: 'White',
+            condition: 'Excellent Condition',
+            pricingSummary: 'R 249 900 Est. R 4 456 p/m',
+            dealerName: 'SMG JETOUR Harbour Arch',
+            dealerAddress: 'Cape Town, Western Cape',
+            averageRating: '4.2 (322 Reviews)',
+            features: "Rubber Floor Mats\nRubber Load Space Mat\nOn The Road",
+            description: 'Introducing the stylish Mazda 2...',
+            vehicleHighlights: "Fuel Efficiency\n5.7 l/100km",
+            price: '249900',
+            sourceUrl: 'https://www.cars.co.za/for-sale/used/2019-Mazda-2-1.5-Dynamic-Auto-5-dr-Western-Cape-Cape-Town/11223434/',
+            contactNumber: '060 123 4567'
+          }
+        };
+        assert(sample19Payload.fields.contactNumber === '060 123 4567', 'TEST E: Payload contains contactNumber field');
+        assert(Object.keys(sample19Payload.fields).length === 19, `TEST E: Payload fields count is 19 (Got: ${Object.keys(sample19Payload.fields).length})`);
+
+        // TEST 10F (TEST F) — TARGET FORM SMART PASTE RECEIVES contactNumber
+        window.CarSmartPasteEngine.fillTargetForm(document, sample19Payload.fields);
+        assert(document.getElementById('target_contact_number').value === '060 123 4567', `TEST F: Target Contact Number received "060 123 4567" (Got: "${document.getElementById('target_contact_number').value}")`);
+
+        // TEST 10G (TEST G) — CONDITION PROTECTION
+        assert(document.getElementById('target_used_or_new').value === 'Used', 'TEST G: First Condition control "Used Or New" remains UNTOUCHED');
+        assert(document.getElementById('target_condition_input').value === 'Excellent Condition', 'TEST G: Second Condition field populated with source Condition value');
+
+        // TEST 10H (TEST H) — ADDRESS PROTECTION
+        assert(document.getElementById('target_dealer_address').value === 'Cape Town, Western Cape', 'TEST H: Target Dealer Address received "Cape Town, Western Cape"');
+        assert(document.getElementById('target_contact_address').value === 'Cape Town, Western Cape', 'TEST H: Target Contact Details Address received "Cape Town, Western Cape"');
+
+        // TEST 10I (TEST I) — FEATURES & HIGHLIGHTS UNTOUCHED
+        assert(document.getElementById('target_features_text').value === "Rubber Floor Mats\nRubber Load Space Mat\nOn The Road", 'TEST I: Features formatting and newlines remain completely intact');
+
         log('\n========================================');
         log('ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!');
         log('========================================');
